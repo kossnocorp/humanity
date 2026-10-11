@@ -102,9 +102,11 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
         tribes: Vec::new(),
         events: Default::default(),
         totals: Totals::default(),
+        insights: PopulationInsights::default(),
     };
     update_environment(&mut world, true);
     populate(&mut world)?;
+    world.record_population();
     Ok(world)
 }
 

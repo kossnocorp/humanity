@@ -33,6 +33,9 @@ impl Simulation {
     }
 
     pub fn step(&mut self, world: &mut World) {
+        if world.insights.since_day.is_none() {
+            world.record_population();
+        }
         world.day += 1;
         humanity_world::update_environment(world, false);
         migrate_herds(world);
@@ -45,6 +48,7 @@ impl Simulation {
         demography(world);
         world.herds.retain(|h| h.animals > 0);
         world.tribes.retain(|t| t.headcount() > 0);
+        world.record_population();
     }
 
     fn move_tribes(&self, world: &mut World) {
@@ -266,6 +270,13 @@ impl Simulation {
                     loser.specialists = Specialists::from_adults(loser.people.adults());
                     world.totals.conflicts += 1;
                     world.totals.deaths += u64::from(deaths);
+                    world.insights.death(
+                        world.day,
+                        loser,
+                        &world.cells[loser.cell as usize],
+                        DeathCause::Conflict,
+                        deaths,
+                    );
                     events.push(Event {
                         day: world.day,
                         kind: EventKind::Conflict,
@@ -408,6 +419,25 @@ fn demography(world: &mut World) {
         let p = 0.018 / year + (1. - t.health).powi(3) * 0.025;
         let mortality = world.rng.expected(t.headcount() as f32 * p);
         let mut deaths = t.people.remove(mortality, &mut world.rng);
+        // Competing hazards: classify the resolved deaths in proportion to their
+        // hazards, using an isolated RNG so instrumentation never alters gameplay.
+        let mut attribution =
+            Rng::new(world.day.wrapping_mul(0x9e3779b97f4a7c15) ^ u64::from(t.id));
+        let background = attribution
+            .expected(deaths as f32 * (0.018 / year) / p)
+            .min(deaths);
+        let cell = &world.cells[t.cell as usize];
+        world
+            .insights
+            .death(world.day, t, cell, DeathCause::Background, background);
+        world.insights.death(
+            world.day,
+            t,
+            cell,
+            DeathCause::Nutrition,
+            deaths - background,
+        );
+        let mut aging = 0;
         for cohorts in [&mut t.people.female, &mut t.people.male] {
             let old_deaths = world
                 .rng
@@ -415,6 +445,7 @@ fn demography(world: &mut World) {
                 .min(cohorts[2]);
             cohorts[2] -= old_deaths;
             deaths += old_deaths;
+            aging += old_deaths;
             let grown = world
                 .rng
                 .expected(cohorts[0] as f32 / (15. * year))
@@ -428,6 +459,9 @@ fn demography(world: &mut World) {
             cohorts[2] += aged;
         }
         t.specialists = Specialists::from_adults(t.people.adults());
+        world
+            .insights
+            .death(world.day, t, cell, DeathCause::Aging, aging);
         world.totals.births += u64::from(births);
         world.totals.deaths += u64::from(deaths);
         for (amount, kind, probability) in [

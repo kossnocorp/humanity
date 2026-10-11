@@ -92,7 +92,7 @@ pub fn setup(mut commands: Commands) {
     commands.spawn((Node { position_type: PositionType::Absolute, bottom: px(0), width: percent(100), height: px(50),
         padding: UiRect::axes(px(24), px(16)), ..default() }, BackgroundColor(Color::srgba(0.035, 0.065, 0.085, 0.98))))
         .with_children(|p| {
-            p.spawn((Text::new("SPACE pause    - / + speed    ARROWS / DRAG pan    WHEEL zoom    CLICK inspect    S save    L load    TAB layer    F next band    HOME atlas"),
+            p.spawn((Text::new("SPACE pause   - / + speed   ARROWS / DRAG pan   WHEEL zoom   CLICK inspect   S save   L load   TAB layer   F next band   HOME atlas   ? population"),
                 TextFont { font_size: 13., ..default() }, TextColor(MUTED)));
         });
 }

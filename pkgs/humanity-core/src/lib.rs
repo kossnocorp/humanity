@@ -1,5 +1,7 @@
 //! Compact, renderer-independent state. One cell is an area; people are cohorts.
 use serde::{Deserialize, Serialize};
+mod insights;
+pub use insights::*;
 
 pub type CellId = u32;
 pub const SAVE_VERSION: u32 = 1;
@@ -335,6 +337,8 @@ pub struct World {
     /// Bounded recent history; lifetime counters remain in totals.
     pub events: std::collections::VecDeque<Event>,
     pub totals: Totals,
+    #[serde(default)]
+    pub insights: PopulationInsights,
 }
 impl World {
     pub fn population(&self) -> u64 {

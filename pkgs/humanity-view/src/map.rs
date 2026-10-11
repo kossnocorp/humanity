@@ -13,6 +13,42 @@ pub struct MapMeshes {
 #[derive(Component)]
 pub struct Marker;
 
+pub fn follow_band(
+    game: Res<Game>,
+    mut view: ResMut<ViewState>,
+    mut camera: Single<(&mut Transform, &Projection), With<Camera2d>>,
+) {
+    let Some(id) = view.following else {
+        return;
+    };
+    let Some(tribe) = game.world.tribes.iter().find(|t| t.id == id) else {
+        view.following = None;
+        view.status = format!("Band {id} no longer exists. F follows another band.");
+        return;
+    };
+    let (transform, projection) = &mut *camera;
+    let Projection::Orthographic(ortho) = projection else {
+        return;
+    };
+    let p = position(tribe.cell, &game.world.config);
+    // Center in the unobscured map area, accounting for the right field notes.
+    let x = (p.x + 175. * ortho.scale).rem_euclid(game.world.config.width as f32 * HEX_WIDTH);
+    let y = p.y + 19. * ortho.scale;
+    if transform.translation.x != x
+        || transform.translation.y != y
+        || view.selected != Some(tribe.cell)
+    {
+        transform.translation.x = x;
+        transform.translation.y = y;
+        view.selected = Some(tribe.cell);
+        view.dirty = true;
+    }
+    view.status = format!(
+        "Following band {id} / {} people. F next band; pan to release.",
+        tribe.headcount()
+    );
+}
+
 pub fn position(id: CellId, c: &PlanetConfig) -> Vec2 {
     let y = id / c.width;
     Vec2::new(
@@ -322,6 +358,78 @@ fn spawn_icon(commands: &mut Commands, image: &Handle<Image>, p: Vec2, size: f32
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    #[test]
+    fn follow_tracks_a_stable_band_id_across_movement_zoom_and_extinction() {
+        let world = humanity_world::generate(PlanetConfig {
+            width: 24,
+            height: 16,
+            cell_km: 20.,
+            temperature: 28.,
+            season_days: 30,
+            axial_tilt: 23.4,
+            ocean_fraction: 0.6,
+            rainfall: 1.,
+            population: 500,
+            seed: 42,
+        })
+        .unwrap();
+        let id = world.tribes[0].id;
+        let mut app = App::new();
+        app.insert_resource(Game {
+            world,
+            simulation: Simulation::default(),
+        });
+        app.insert_resource(ViewState {
+            following: Some(id),
+            ..default()
+        });
+        let camera = app
+            .world_mut()
+            .spawn((
+                Camera2d,
+                Transform::default(),
+                Projection::Orthographic(OrthographicProjection::default_2d()),
+            ))
+            .id();
+        app.world_mut().run_system_once(follow_band).unwrap();
+        let before = app.world().get::<Transform>(camera).unwrap().translation;
+        let next = {
+            let mut game = app.world_mut().resource_mut::<Game>();
+            let cell = game.world.tribes[0].cell;
+            let next = game.world.config.neighbors(cell).next().unwrap();
+            game.world.tribes[0].cell = next;
+            game.world.tribes.reverse();
+            next
+        };
+        app.world_mut().run_system_once(follow_band).unwrap();
+        assert_eq!(app.world().resource::<ViewState>().selected, Some(next));
+        assert_ne!(
+            app.world().get::<Transform>(camera).unwrap().translation,
+            before
+        );
+        if let Some(mut projection) = app.world_mut().get_mut::<Projection>(camera)
+            && let Projection::Orthographic(p) = &mut *projection
+        {
+            p.scale = 2.;
+        }
+        app.world_mut().run_system_once(follow_band).unwrap();
+        let game = app.world().resource::<Game>();
+        let p = position(next, &game.world.config);
+        let actual = app.world().get::<Transform>(camera).unwrap().translation;
+        assert!(
+            (actual.x - (p.x + 350.).rem_euclid(game.world.config.width as f32 * HEX_WIDTH)).abs()
+                < 0.001
+        );
+        assert!((actual.y - (p.y + 38.)).abs() < 0.001);
+        app.world_mut()
+            .resource_mut::<Game>()
+            .world
+            .tribes
+            .retain(|t| t.id != id);
+        app.world_mut().run_system_once(follow_band).unwrap();
+        assert_eq!(app.world().resource::<ViewState>().following, None);
+    }
     #[test]
     fn hex_picking_round_trips_and_wraps() {
         let c = PlanetConfig {

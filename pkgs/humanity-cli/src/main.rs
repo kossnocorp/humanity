@@ -56,6 +56,9 @@ struct Args {
     /// Capture a rendered frame to PNG and exit (requires graphics/display).
     #[arg(long, conflicts_with = "headless")]
     screenshot: Option<PathBuf>,
+    /// Open the population and mortality dashboard (also available with ?).
+    #[arg(long, conflicts_with = "headless")]
+    insights: bool,
 }
 
 fn main() -> Result<()> {
@@ -128,7 +131,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
     #[cfg(feature = "graphics")]
-    if !humanity_view::run(world, args.save, args.paused, args.screenshot) {
+    if !humanity_view::run(
+        world,
+        args.save,
+        args.paused,
+        args.screenshot,
+        args.insights,
+    ) {
         bail!("viewer exited with an error");
     }
     Ok(())

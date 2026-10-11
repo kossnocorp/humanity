@@ -36,8 +36,11 @@ pub fn load(path: impl AsRef<Path>) -> Result<World> {
         256 * 1024,
         File::open(path.as_ref()).context("opening snapshot")?,
     );
-    let world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
+    let mut world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
     validate(&world).context("invalid snapshot")?;
+    if world.insights.since_day.is_none() {
+        world.record_population();
+    }
     Ok(world)
 }
 
@@ -200,6 +203,96 @@ pub fn validate(w: &World) -> Result<()> {
         w.day < 1_000_000_000,
         "simulation day outside supported range"
     );
+    validate_insights(w)?;
+    Ok(())
+}
+
+fn validate_insights(w: &World) -> Result<()> {
+    let d = &w.insights;
+    let Some(since) = d.since_day else {
+        ensure!(
+            d.history.is_empty()
+                && d.recent_deaths.is_empty()
+                && d.deaths == DeathCounts::default(),
+            "incomplete population diagnostics"
+        );
+        return Ok(());
+    };
+    ensure!(
+        since <= w.day && d.deaths.checked_total() == Some(w.totals.deaths),
+        "death cause accounting mismatch"
+    );
+    ensure!(
+        !d.history.is_empty()
+            && d.history.len() <= HISTORY_DAYS
+            && d.recent_deaths.len() <= DEATH_RECORDS,
+        "invalid diagnostic history size"
+    );
+    let mut previous: Option<&PopulationSample> = None;
+    for s in &d.history {
+        let deaths = s.deaths.checked_total().context("death count overflow")?;
+        ensure!(
+            s.day >= since
+                && s.day <= w.day
+                && s.births <= w.totals.births
+                && u64::from(w.config.population)
+                    .checked_add(s.births)
+                    .and_then(|n| n.checked_sub(deaths))
+                    == Some(s.population),
+            "invalid historical population accounting"
+        );
+        ensure!(
+            s.cohorts.iter().try_fold(0_u64, |n, x| n.checked_add(*x)) == Some(s.population)
+                && s.low_health <= s.population
+                && s.low_food <= s.population
+                && s.mean_health.is_finite()
+                && (0. ..=1.).contains(&s.mean_health),
+            "invalid population sample"
+        );
+        ensure!(
+            DeathCause::ALL
+                .into_iter()
+                .all(|c| s.deaths.get(c) <= d.deaths.get(c)),
+            "historical deaths exceed totals"
+        );
+        if let Some(p) = previous {
+            ensure!(
+                s.day == p.day + 1
+                    && s.births >= p.births
+                    && DeathCause::ALL
+                        .into_iter()
+                        .all(|c| s.deaths.get(c) >= p.deaths.get(c)),
+                "nonmonotonic population history"
+            );
+        }
+        previous = Some(s);
+    }
+    let last = d.history.back().unwrap();
+    ensure!(
+        last.day == w.day
+            && last.population == w.population()
+            && last.births == w.totals.births
+            && last.deaths == d.deaths,
+        "stale population history"
+    );
+    let mut day = since;
+    for r in &d.recent_deaths {
+        ensure!(
+            r.day >= day
+                && r.day <= w.day
+                && r.count > 0
+                && (r.cell as usize) < w.cells.len()
+                && r.health.is_finite()
+                && (0. ..=1.).contains(&r.health)
+                && r.food_days.is_finite()
+                && r.food_days >= 0.
+                && r.temperature.is_finite()
+                && r.snow.is_finite()
+                && (0. ..=1.).contains(&r.snow),
+            "invalid death record"
+        );
+        day = r.day;
+    }
     Ok(())
 }
 
@@ -221,6 +314,7 @@ pub fn summary(w: &World) -> serde_json::Value {
         "river_cells": rivers, "snow_cells": snow, "mean_temperature": temperature / w.cells.len() as f64,
         "mean_health": w.tribes.iter().map(|t| f64::from(t.health)).sum::<f64>() / w.tribes.len().max(1) as f64,
         "totals": w.totals, "recent_events": w.events.len(), "rng_state": w.rng.state,
+        "death_causes": w.insights.deaths, "population_insights": w.insights.history.back(),
     })
 }
 
@@ -262,6 +356,25 @@ mod tests {
         assert!(save(&w, &path).is_err());
         assert_eq!(saved, fs::read(&path).unwrap());
         restored.version += 1;
+        assert!(validate(&restored).is_err());
+    }
+
+    #[test]
+    fn old_saves_get_an_honest_baseline_and_diagnostic_corruption_is_rejected() {
+        let mut w = world();
+        humanity_sim::Simulation::default().advance(&mut w, 70);
+        let mut old = serde_json::to_value(&w).unwrap();
+        old.as_object_mut().unwrap().remove("insights");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.json");
+        fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        let mut restored = load(&path).unwrap();
+        assert_eq!(restored.insights.deaths.unrecorded, w.totals.deaths);
+        assert_eq!(restored.insights.since_day, Some(70));
+        assert_eq!(restored.insights.history.len(), 1);
+        humanity_sim::Simulation::default().advance(&mut restored, 30);
+        validate(&restored).unwrap();
+        restored.insights.deaths.nutrition += 1;
         assert!(validate(&restored).is_err());
     }
 }

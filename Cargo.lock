@@ -2391,6 +2391,7 @@ dependencies = [
  "humanity-core",
  "humanity-save",
  "humanity-sim",
+ "humanity-world",
  "resvg",
 ]
 

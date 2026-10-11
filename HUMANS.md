@@ -31,8 +31,17 @@ With mise installed, `mise run play`, `mise run simulate`, and `mise run check` 
 | S | Atomically save to `--save` (default `saves/world.json`) |
 | L | Restore that snapshot, paused |
 | Tab | Biomes/snow → temperature → edible resources |
-| F | Focus the next human band |
+| F | Follow the next human band as it moves; arrows/drag/click/Home release it |
 | Home | Fit the planet in the atlas |
+| `?` (Shift+/ on US keyboards) | Open/close live population insights; Esc also closes |
+
+### Population insights
+
+The `?` screen charts population, births/deaths, lifetime death causes, and current age cohorts. It also shows how many people have low health or little food and lists recent death groups with their band's food, health, temperature and snow context. Scroll for details on smaller windows. **Time keeps flowing; Space and -/+ work in the chart view.** You can also launch with `--insights`.
+
+Deaths are tracked as nutrition/poor-health mortality, background mortality, additional elder mortality, or conflict casualties. The shared background/health death roll is attributed proportionally to those risks using a separate deterministic random stream, preserving gameplay outcomes. Cold/snow affect food access and demand; they are not separate direct death causes in this model. Poor health can also reflect conflict injuries.
+
+Diagnostics persist in saves: the last 720 daily samples, lifetime cause totals, and 128 recent death groups. Older saves start history when loaded and label previous deaths **unrecorded**, without inventing causes or past charts. `--inspect` and headless JSON summaries also include cause totals.
 
 Cream camp icons are mobile human bands, not settlements. Ochre animal icons are herds. Rivers are blue lines; snow lightens the ground. The header names the **northern** season; the southern hemisphere has the opposite season. Temperature overlay runs blue → red; resource overlay brown → green. Extremely distant zoom uses sampled regional blocks; zoom in for exact hexes and rivers.
 

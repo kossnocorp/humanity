@@ -1,6 +1,10 @@
 use crate::*;
 use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
+    input::{
+        ButtonState,
+        keyboard::{Key, KeyboardInput},
+    },
     window::PrimaryWindow,
 };
 
@@ -14,7 +18,28 @@ pub fn controls(
     mut camera: Single<(&mut Transform, &mut Projection), With<Camera2d>>,
     mut game: ResMut<Game>,
     mut view: ResMut<ViewState>,
+    mut keyboard: MessageReader<KeyboardInput>,
 ) {
+    let question = keyboard
+        .read()
+        .filter(|e| {
+            e.state == ButtonState::Pressed
+                && !e.repeat
+                && matches!(&e.logical_key, Key::Character(c) if c.as_str() == "?")
+        })
+        .count()
+        > 0;
+    if question
+        || (keys.just_pressed(KeyCode::Slash)
+            && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]))
+    {
+        view.insights_open = !view.insights_open;
+        view.drag_start = None;
+        view.accumulator = 0.;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        view.insights_open = false;
+    }
     if keys.just_pressed(KeyCode::Space) {
         view.paused = !view.paused;
         view.accumulator = 0.;
@@ -44,14 +69,20 @@ pub fn controls(
             Ok(world) => {
                 game.world = world;
                 game.simulation = Simulation::default();
+                view.snapshot_revision = view.snapshot_revision.wrapping_add(1);
                 view.paused = true;
                 view.accumulator = 0.;
                 view.dirty = true;
                 view.selected = None;
+                view.following = None;
                 view.status = format!("Loaded day {} · paused", game.world.day);
             }
             Err(e) => view.status = format!("Load failed: {e:#}"),
         }
+    }
+    if view.insights_open {
+        wheel.clear();
+        return;
     }
     let (transform, projection) = &mut *camera;
     let Projection::Orthographic(ortho) = &mut **projection else {
@@ -62,6 +93,7 @@ pub fn controls(
     let map_height = game.world.config.height as f32 * RADIUS * 1.5;
     let fit = (map_width / (size.x - 360.).max(300.)).max(map_height / (size.y - 150.).max(200.));
     if keys.just_pressed(KeyCode::Home) {
+        view.following = None;
         ortho.scale = fit * 1.08;
         transform.translation.x = map_width / 2. + 160. * ortho.scale;
         transform.translation.y = -map_height / 2.;
@@ -70,6 +102,7 @@ pub fn controls(
     if keys.just_pressed(KeyCode::KeyF) && !game.world.tribes.is_empty() {
         view.focus_index = (view.focus_index + 1) % game.world.tribes.len();
         let cell = game.world.tribes[view.focus_index].cell;
+        view.following = Some(game.world.tribes[view.focus_index].id);
         let p = map::position(cell, &game.world.config);
         transform.translation.x = p.x + 140.;
         transform.translation.y = p.y;
@@ -82,6 +115,7 @@ pub fn controls(
         f32::from(keys.pressed(KeyCode::ArrowUp)) - f32::from(keys.pressed(KeyCode::ArrowDown)),
     );
     if direction != Vec2::ZERO {
+        view.following = None;
         transform.translation +=
             (direction.normalize() * 620. * ortho.scale * time.delta_secs()).extend(0.);
         view.dirty = true;
@@ -116,6 +150,7 @@ pub fn controls(
             view.dragged = true;
         }
         if view.dragged {
+            view.following = None;
             let delta = p - last;
             transform.translation += Vec3::new(-delta.x, delta.y, 0.) * ortho.scale;
             view.dirty |= delta != Vec2::ZERO;
@@ -131,6 +166,7 @@ pub fn controls(
             let world_pos = transform.translation.truncate()
                 + Vec2::new(p.x - size.x / 2., size.y / 2. - p.y) * ortho.scale;
             view.selected = map::cell_at(world_pos, &game.world.config);
+            view.following = None;
             view.dirty = true;
         }
         view.drag_start = None;
@@ -138,7 +174,9 @@ pub fn controls(
     }
     let old = transform.translation;
     transform.translation.x = transform.translation.x.rem_euclid(map_width);
-    transform.translation.y = transform.translation.y.clamp(-map_height, 0.);
+    if view.following.is_none() {
+        transform.translation.y = transform.translation.y.clamp(-map_height, 0.);
+    }
     view.dirty |= old != transform.translation || size != view.last_size;
     view.last_size = size;
 }
