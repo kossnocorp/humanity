@@ -1,0 +1,15 @@
+[package]
+name = "humanity-save"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+humanity-core.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tempfile = "3"
+
+[dev-dependencies]
+humanity-world.workspace = true
+humanity-sim.workspace = true

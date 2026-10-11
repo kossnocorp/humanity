@@ -1,0 +1,12 @@
+[package]
+name = "humanity-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+humanity-core.workspace = true
+humanity-world.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

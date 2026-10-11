@@ -1,0 +1,4 @@
+/target/
+/saves/
+*.tmp
+.DS_Store

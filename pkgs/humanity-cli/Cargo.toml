@@ -1,0 +1,23 @@
+[package]
+name = "humanity-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "humanity"
+path = "src/main.rs"
+
+[features]
+default = ["graphics"]
+graphics = ["dep:humanity-view"]
+
+[dependencies]
+humanity-core.workspace = true
+humanity-world.workspace = true
+humanity-sim.workspace = true
+humanity-save.workspace = true
+humanity-view = { workspace = true, optional = true }
+clap = { version = "4", features = ["derive"] }
+anyhow.workspace = true
+serde_json.workspace = true

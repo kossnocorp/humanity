@@ -20,4 +20,14 @@ idiomatic_version_file_enable_tools = ["rust"] # Use rust-toolchain.toml
 
 # Tasks ########################################################################
 
-# ...
+[tasks.play]
+description = "Open the prototype hunter-gatherer planet"
+run = "cargo run -p humanity-cli -- --width 128 --height 64 --temperature 28 --season-days 90 --population 6000 --seed 42"
+
+[tasks.check]
+description = "Format, lint and test the workspace"
+run = ["cargo fmt --all --check", "cargo clippy --workspace --all-targets -- -D warnings", "cargo test --workspace"]
+
+[tasks.simulate]
+description = "Run two years without compiling the renderer"
+run = "cargo run -p humanity-cli --no-default-features -- --headless --width 128 --height 64 --temperature 28 --season-days 90 --population 6000 --days 720 --report-every 180 --save saves/two-years.json"
