@@ -4,13 +4,13 @@ mod insights;
 pub use insights::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlanetConfig {
-    pub width: u32,
-    pub height: u32,
+    /// Icosahedron edge subdivision frequency; cells = 10 * resolution^2 + 2.
+    pub resolution: u32,
     pub cell_km: f32,
     /// Annual sea-level equatorial temperature, Celsius.
     pub temperature: f32,
@@ -24,11 +24,11 @@ pub struct PlanetConfig {
 
 impl PlanetConfig {
     pub fn validate(&self) -> Result<(), String> {
-        if self.width < 24 || self.height < 16 || !self.height.is_multiple_of(2) {
-            return Err("width >= 24 and even height >= 16 are required".into());
-        }
-        if u64::from(self.width) * u64::from(self.height) > MAX_CELLS {
-            return Err(format!("planet exceeds {MAX_CELLS} cells"));
+        if !(2..=humanity_grid::MAX_RESOLUTION).contains(&self.resolution) {
+            return Err(format!(
+                "resolution must be 2..={} (at most {MAX_CELLS} cells)",
+                humanity_grid::MAX_RESOLUTION
+            ));
         }
         for (name, value, min, max) in [
             ("cell-km", self.cell_km, 1., 200.),
@@ -51,36 +51,17 @@ impl PlanetConfig {
     }
 
     pub fn len(&self) -> usize {
-        (self.width * self.height) as usize
+        (10 * u64::from(self.resolution).pow(2) + 2) as usize
     }
     pub fn is_empty(&self) -> bool {
-        self.width == 0 || self.height == 0
+        false
     }
     pub fn year_days(&self) -> u32 {
         self.season_days * 4
     }
-    pub fn latitude(&self, cell: CellId) -> f32 {
-        1. - 2. * ((cell / self.width) as f32 + 0.5) / self.height as f32
-    }
-    /// Odd-row offset hexes on a cylinder: wrap longitude, bound the poles.
-    pub fn neighbors(&self, cell: CellId) -> impl Iterator<Item = CellId> + '_ {
-        let x = (cell % self.width) as i32;
-        let y = (cell / self.width) as i32;
-        let diagonal = if y % 2 == 0 { -1 } else { 1 };
-        [
-            (1, 0),
-            (-1, 0),
-            (0, -1),
-            (diagonal, -1),
-            (0, 1),
-            (diagonal, 1),
-        ]
-        .into_iter()
-        .filter_map(move |(dx, dy)| {
-            let row = y + dy;
-            (row >= 0 && row < self.height as i32)
-                .then(|| row as u32 * self.width + (x + dx).rem_euclid(self.width as i32) as u32)
-        })
+    /// Equal-area hex approximation relates mean neighbor spacing to radius.
+    pub fn radius_km(&self) -> f32 {
+        self.cell_km * (self.len() as f32 * 3_f32.sqrt() / (8. * std::f32::consts::PI)).sqrt()
     }
 }
 
@@ -329,6 +310,7 @@ pub struct Totals {
 pub struct World {
     pub version: u32,
     pub config: PlanetConfig,
+    pub grid: humanity_grid::Grid,
     pub day: u64,
     pub rng: Rng,
     pub cells: Vec<Cell>,
@@ -362,31 +344,6 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    pub fn config() -> PlanetConfig {
-        PlanetConfig {
-            width: 24,
-            height: 16,
-            cell_km: 20.,
-            temperature: 28.,
-            season_days: 30,
-            axial_tilt: 23.4,
-            ocean_fraction: 0.6,
-            rainfall: 1.,
-            population: 500,
-            seed: 42,
-        }
-    }
-    #[test]
-    fn neighbors_are_reciprocal_at_seams_and_poles() {
-        let c = config();
-        for a in 0..c.len() as u32 {
-            let neighbors: Vec<_> = c.neighbors(a).collect();
-            assert!(neighbors.len() >= 4 && neighbors.len() <= 6);
-            for b in neighbors {
-                assert!(c.neighbors(b).any(|n| n == a));
-            }
-        }
-    }
     #[test]
     fn cohort_removal_conserves_population() {
         for count in 0..120 {

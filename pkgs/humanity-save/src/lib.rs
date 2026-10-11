@@ -4,7 +4,7 @@ use humanity_core::*;
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
+    io::{BufReader, BufWriter, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -32,10 +32,22 @@ pub fn save(world: &World, path: impl AsRef<Path>) -> Result<()> {
 }
 
 pub fn load(path: impl AsRef<Path>) -> Result<World> {
-    let reader = BufReader::with_capacity(
+    let mut reader = BufReader::with_capacity(
         256 * 1024,
         File::open(path.as_ref()).context("opening snapshot")?,
     );
+    #[derive(serde::Deserialize)]
+    struct Header {
+        version: u32,
+    }
+    let header: Header =
+        serde_json::from_reader(&mut reader).context("reading snapshot version")?;
+    ensure!(
+        header.version == SAVE_VERSION,
+        "unsupported save version {} (expected {SAVE_VERSION}); cylindrical v1 worlds cannot be resumed on a spherical grid; generate a new planet",
+        header.version
+    );
+    reader.seek(SeekFrom::Start(0))?;
     let mut world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
     validate(&world).context("invalid snapshot")?;
     if world.insights.since_day.is_none() {
@@ -53,7 +65,11 @@ pub fn validate(w: &World) -> Result<()> {
     w.config.validate().map_err(anyhow::Error::msg)?;
     ensure!(
         w.cells.len() == w.config.len(),
-        "cell count disagrees with dimensions"
+        "cell count disagrees with spherical resolution"
+    );
+    ensure!(
+        w.grid.resolution() == w.config.resolution && w.grid.len() == w.cells.len(),
+        "grid resolution mismatch"
     );
     ensure!(w.events.len() <= 512, "event history is oversized");
     let finite_range = |x: f32, min: f32, max: f32| x.is_finite() && (min..=max).contains(&x);
@@ -83,7 +99,7 @@ pub fn validate(w: &World) -> Result<()> {
         );
         if let Some(downstream) = c.drainage {
             ensure!(
-                w.config.neighbors(i as u32).any(|n| n == downstream),
+                w.grid.neighbors(i as u32).any(|n| n == downstream),
                 "nonlocal drainage at cell {i}"
             );
         } else {
@@ -309,6 +325,7 @@ pub fn summary(w: &World) -> serde_json::Value {
     }
     serde_json::json!({
         "day": w.day, "year": w.day / u64::from(w.config.year_days()) + 1,
+        "cells": w.grid.len(), "pentagons": 12, "radius_km": w.config.radius_km(),
         "northern_season": w.season(), "population": w.population(), "tribes": w.tribes.len(),
         "animals": w.animals(), "herds": w.herds.len(), "biomes": biomes,
         "river_cells": rivers, "snow_cells": snow, "mean_temperature": temperature / w.cells.len() as f64,
@@ -323,8 +340,7 @@ mod tests {
     use super::*;
     fn world() -> World {
         humanity_world::generate(PlanetConfig {
-            width: 48,
-            height: 32,
+            resolution: 12,
             cell_km: 20.,
             temperature: 28.,
             season_days: 30,
@@ -360,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn old_saves_get_an_honest_baseline_and_diagnostic_corruption_is_rejected() {
+    fn missing_diagnostics_get_an_honest_baseline_and_corruption_is_rejected() {
         let mut w = world();
         humanity_sim::Simulation::default().advance(&mut w, 70);
         let mut old = serde_json::to_value(&w).unwrap();
@@ -376,5 +392,14 @@ mod tests {
         validate(&restored).unwrap();
         restored.insights.deaths.nutrition += 1;
         assert!(validate(&restored).is_err());
+    }
+
+    #[test]
+    fn cylindrical_versions_are_rejected_before_decoding_spherical_geometry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cylinder.json");
+        fs::write(&path, r#"{"version":1,"config":{"width":128,"height":64}}"#).unwrap();
+        let error = load(path).unwrap_err().to_string();
+        assert!(error.contains("cylindrical"));
     }
 }

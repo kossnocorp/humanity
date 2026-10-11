@@ -92,7 +92,7 @@ pub fn setup(mut commands: Commands) {
     commands.spawn((Node { position_type: PositionType::Absolute, bottom: px(0), width: percent(100), height: px(50),
         padding: UiRect::axes(px(24), px(16)), ..default() }, BackgroundColor(Color::srgba(0.035, 0.065, 0.085, 0.98))))
         .with_children(|p| {
-            p.spawn((Text::new("SPACE pause   - / + speed   ARROWS / DRAG pan   WHEEL zoom   CLICK inspect   S save   L load   TAB layer   F next band   HOME atlas   ? population"),
+            p.spawn((Text::new("SPACE pause   - / + speed   ARROWS / DRAG rotate   WHEEL zoom   CLICK inspect   S save   L load   TAB layer   F follow   HOME globe   ? population"),
                 TextFont { font_size: 13., ..default() }, TextColor(MUTED)));
         });
 }
@@ -135,17 +135,19 @@ pub fn update(
                     .map(|h| u64::from(h.animals))
                     .sum();
                 let mut body = format!(
-                    "HEX {}, {}   /   {:?}\n{} m elevation  /  {:.0} km spacing\n{} latitude  /  river flow {:.0}\n\nWEATHER & LIVING LAND\n{:.1} C   /   rain {:.1} mm/day\nSnow {:.0}%   /   soil moisture {:.0}%\nPlants {:>7.0}   Fruit {:>7.0}\nGame {:>8.0}   Graze {:>6.0}\nFood: person-days; graze: animal-days\n{} herd animals here\n",
-                    id % w.config.width,
-                    id / w.config.width,
+                    "CELL {} / {} / {:?}\nLat {:+.1} / Lon {:+.1}\n{} m elevation / ~{:.0} km spacing\nPlanet radius {:.0} km / river {:.0}\n\nWEATHER & LIVING LAND\n{:.1} C   /   rain {:.1} mm/day\nSnow {:.0}%   /   soil moisture {:.0}%\nPlants {:>7.0}   Fruit {:>7.0}\nGame {:>8.0}   Graze {:>6.0}\nFood: person-days; graze: animal-days\n{} herd animals here\n",
+                    id,
+                    if w.grid.degree(id) == 5 {
+                        "pentagon"
+                    } else {
+                        "hexagon"
+                    },
                     c.biome,
+                    w.grid.latitude(id) * 90.,
+                    w.grid.longitude(id).to_degrees(),
                     c.elevation,
                     w.config.cell_km,
-                    if w.config.latitude(id) > 0. {
-                        "Northern"
-                    } else {
-                        "Southern"
-                    },
+                    w.config.radius_km(),
                     c.river,
                     c.weather.temperature,
                     c.weather.precipitation,
@@ -166,7 +168,7 @@ pub fn update(
                         .join("  ");
                     let children = t.people.female[0] + t.people.male[0];
                     let elders = t.people.female[2] + t.people.male[2];
-                    body.push_str(&format!("\nBAND {}   /   {} people\nHealth {:.0}%  /  food {:.1} days\nFemale {}  /  Male {}\nYoung {}  /  Adult {}  /  Elder {}\nHunters {}  /  Gatherers {}\nHealers {}  /  Guides {}\nLanguage families\n{}\n{} band(s) share this hex",
+                    body.push_str(&format!("\nBAND {}   /   {} people\nHealth {:.0}%  /  food {:.1} days\nFemale {}  /  Male {}\nYoung {}  /  Adult {}  /  Elder {}\nHunters {}  /  Gatherers {}\nHealers {}  /  Guides {}\nLanguage families\n{}\n{} band(s) share this cell",
                         t.id, t.headcount(), t.health * 100., t.food / t.headcount().max(1) as f32,
                         t.people.female.iter().sum::<u32>(), t.people.male.iter().sum::<u32>(), children, t.people.adults(), elders,
                         t.specialists.hunters, t.specialists.gatherers, t.specialists.healers, t.specialists.guides, languages, people.len()));
@@ -175,7 +177,7 @@ pub fn update(
                 }
                 body
             } else {
-                "Click any hex to inspect its\nclimate, resources, herds and people.\n\nThe planet wraps east-west.\nSeasons reverse across the equator.".into()
+                "Click a cell on the globe to inspect\nclimate, resources, herds and people.\n\nA closed sphere: 12 pentagons,\nall remaining cells hexagons.\nDrag freely across either pole.\nSeasons reverse across the equator.".into()
             };
         } else if matches!(kind, Hud::Chronicle) {
             **text = w
@@ -199,7 +201,7 @@ pub fn update(
                         EventKind::Exchange => "peaceful exchange".into(),
                         _ => "band lost".into(),
                     };
-                    format!("Day {} · Band {} · {}", e.day, e.tribe, action)
+                    format!("Day {} / Band {} / {}", e.day, e.tribe, action)
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -209,8 +211,8 @@ pub fn update(
         } else if matches!(kind, Hud::Status) {
             **text = if view.lod > 1 {
                 format!(
-                    "{}   /   Regional overview ({}x{} sampling)",
-                    view.status, view.lod, view.lod
+                    "{}   /   Orbital overview: zoom in for individual cells",
+                    view.status
                 )
             } else {
                 view.status.clone()

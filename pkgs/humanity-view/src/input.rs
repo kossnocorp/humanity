@@ -1,9 +1,9 @@
 use crate::*;
 use bevy::{
-    input::mouse::{MouseScrollUnit, MouseWheel},
     input::{
         ButtonState,
         keyboard::{Key, KeyboardInput},
+        mouse::{MouseScrollUnit, MouseWheel},
     },
     window::PrimaryWindow,
 };
@@ -15,7 +15,6 @@ pub fn controls(
     mut wheel: MessageReader<MouseWheel>,
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut camera: Single<(&mut Transform, &mut Projection), With<Camera2d>>,
     mut game: ResMut<Game>,
     mut view: ResMut<ViewState>,
     mut keyboard: MessageReader<KeyboardInput>,
@@ -35,7 +34,6 @@ pub fn controls(
     {
         view.insights_open = !view.insights_open;
         view.drag_start = None;
-        view.accumulator = 0.;
     }
     if keys.just_pressed(KeyCode::Escape) {
         view.insights_open = false;
@@ -57,7 +55,7 @@ pub fn controls(
     if keys.just_pressed(KeyCode::KeyS) {
         view.status = match humanity_save::save(&game.world, &view.save_path) {
             Ok(()) => format!(
-                "Saved day {} · {}",
+                "Saved day {} / {}",
                 game.world.day,
                 view.save_path.display()
             ),
@@ -75,7 +73,7 @@ pub fn controls(
                 view.dirty = true;
                 view.selected = None;
                 view.following = None;
-                view.status = format!("Loaded day {} · paused", game.world.day);
+                view.status = format!("Loaded day {} / paused", game.world.day);
             }
             Err(e) => view.status = format!("Load failed: {e:#}"),
         }
@@ -84,30 +82,26 @@ pub fn controls(
         wheel.clear();
         return;
     }
-    let (transform, projection) = &mut *camera;
-    let Projection::Orthographic(ortho) = &mut **projection else {
-        return;
-    };
     let size = Vec2::new(window.width(), window.height());
-    let map_width = game.world.config.width as f32 * HEX_WIDTH;
-    let map_height = game.world.config.height as f32 * RADIUS * 1.5;
-    let fit = (map_width / (size.x - 360.).max(300.)).max(map_height / (size.y - 150.).max(200.));
     if keys.just_pressed(KeyCode::Home) {
         view.following = None;
-        ortho.scale = fit * 1.08;
-        transform.translation.x = map_width / 2. + 160. * ortho.scale;
-        transform.translation.y = -map_height / 2.;
+        view.distance = PLANET_RADIUS * 3.2;
         view.dirty = true;
+        view.status = "3D globe / drag or arrows to rotate across either pole.".into();
     }
     if keys.just_pressed(KeyCode::KeyF) && !game.world.tribes.is_empty() {
+        if let Some(id) = view.following
+            && let Some(i) = game.world.tribes.iter().position(|t| t.id == id)
+        {
+            view.focus_index = i;
+        }
         view.focus_index = (view.focus_index + 1) % game.world.tribes.len();
-        let cell = game.world.tribes[view.focus_index].cell;
-        view.following = Some(game.world.tribes[view.focus_index].id);
-        let p = map::position(cell, &game.world.config);
-        transform.translation.x = p.x + 140.;
-        transform.translation.y = p.y;
-        ortho.scale = 0.85;
-        view.selected = Some(cell);
+        let tribe = &game.world.tribes[view.focus_index];
+        view.following = Some(tribe.id);
+        view.selected = Some(tribe.cell);
+        view.distance = PLANET_RADIUS
+            + (map::cell_spacing(&game.world) * 12.)
+                .clamp(PLANET_RADIUS * 0.025, PLANET_RADIUS * 1.4);
         view.dirty = true;
     }
     let direction = Vec2::new(
@@ -116,25 +110,35 @@ pub fn controls(
     );
     if direction != Vec2::ZERO {
         view.following = None;
-        transform.translation +=
-            (direction.normalize() * 620. * ortho.scale * time.delta_secs()).extend(0.);
+        let speed =
+            ((view.distance - PLANET_RADIUS) / PLANET_RADIUS).clamp(0.025, 1.5) * time.delta_secs();
+        view.orbit = (view.orbit
+            * Quat::from_rotation_y(direction.x * speed)
+            * Quat::from_rotation_x(-direction.y * speed))
+        .normalize();
         view.dirty = true;
     }
     let cursor = window.cursor_position();
     let on_map = cursor.is_some_and(|p| p.y > 92. && p.y < size.y - 54. && p.x < size.x - 350.);
-    for event in wheel.read() {
+    for e in wheel.read() {
         if !on_map {
             continue;
         }
-        let amount = match event.unit {
-            MouseScrollUnit::Line => event.y,
-            MouseScrollUnit::Pixel => event.y / 60.,
+        let amount = match e.unit {
+            MouseScrollUnit::Line => e.y,
+            MouseScrollUnit::Pixel => e.y / 60.,
         };
-        let previous = ortho.scale;
-        ortho.scale = (ortho.scale * (-amount * 0.16).exp()).clamp(0.18, fit * 1.3);
-        if let Some(p) = cursor {
-            let offset = Vec2::new(p.x - size.x / 2., size.y / 2. - p.y);
-            transform.translation += (offset * (previous - ortho.scale)).extend(0.);
+        let before = cursor.and_then(|p| map::screen_to_sphere(p, size, view.orbit, view.distance));
+        view.distance = PLANET_RADIUS
+            + ((view.distance - PLANET_RADIUS) * (-amount * 0.16).exp())
+                .clamp(PLANET_RADIUS * 0.015, PLANET_RADIUS * 6.);
+        if view.following.is_none()
+            && let (Some(a), Some(b)) = (
+                before,
+                cursor.and_then(|p| map::screen_to_sphere(p, size, view.orbit, view.distance)),
+            )
+        {
+            view.orbit = (Quat::from_rotation_arc(b, a) * view.orbit).normalize();
         }
         view.dirty = true;
     }
@@ -152,7 +156,12 @@ pub fn controls(
         if view.dragged {
             view.following = None;
             let delta = p - last;
-            transform.translation += Vec3::new(-delta.x, delta.y, 0.) * ortho.scale;
+            let sensitivity = 2. * (CAMERA_FOV * 0.5).tan() * (view.distance - PLANET_RADIUS)
+                / (PLANET_RADIUS * size.y.max(1.));
+            view.orbit = (view.orbit
+                * Quat::from_rotation_y(-delta.x * sensitivity)
+                * Quat::from_rotation_x(-delta.y * sensitivity))
+            .normalize();
             view.dirty |= delta != Vec2::ZERO;
         }
         view.last_cursor = Some(p);
@@ -163,20 +172,14 @@ pub fn controls(
             && on_map
             && let Some(p) = cursor
         {
-            let world_pos = transform.translation.truncate()
-                + Vec2::new(p.x - size.x / 2., size.y / 2. - p.y) * ortho.scale;
-            view.selected = map::cell_at(world_pos, &game.world.config);
+            view.selected = map::screen_to_sphere(p, size, view.orbit, view.distance)
+                .map(|p| game.world.grid.nearest(p));
             view.following = None;
             view.dirty = true;
         }
         view.drag_start = None;
         view.last_cursor = None;
     }
-    let old = transform.translation;
-    transform.translation.x = transform.translation.x.rem_euclid(map_width);
-    if view.following.is_none() {
-        transform.translation.y = transform.translation.y.clamp(-map_height, 0.);
-    }
-    view.dirty |= old != transform.translation || size != view.last_size;
+    view.dirty |= size != view.last_size;
     view.last_size = size;
 }

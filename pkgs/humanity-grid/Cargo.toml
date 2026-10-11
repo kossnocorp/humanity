@@ -1,0 +1,12 @@
+[package]
+name = "humanity-grid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = "0.30"
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

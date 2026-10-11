@@ -3,8 +3,7 @@ use humanity_sim::Simulation;
 
 fn config(seed: u64) -> PlanetConfig {
     PlanetConfig {
-        width: 64,
-        height: 32,
+        resolution: 14,
         cell_km: 20.,
         temperature: 28.,
         season_days: 30,

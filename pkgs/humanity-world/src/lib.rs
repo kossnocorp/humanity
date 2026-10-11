@@ -1,22 +1,19 @@
 //! Periodic planetary terrain, priority-flood drainage, climate and standing ecology.
 use humanity_core::*;
+use humanity_grid::Grid;
 use noise::{NoiseFn, OpenSimplex};
-use std::{cmp::Reverse, collections::BinaryHeap, f64::consts::TAU};
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 pub fn generate(config: PlanetConfig) -> Result<World, String> {
     config.validate()?;
+    let grid = Grid::new(config.resolution)?;
     let noise = OpenSimplex::new(config.seed as u32 ^ (config.seed >> 32) as u32);
     let mut height = Vec::with_capacity(config.len());
     let mut humidity = Vec::with_capacity(config.len());
     for id in 0..config.len() as u32 {
-        let lon = f64::from(id % config.width) / f64::from(config.width) * TAU;
-        let lat = f64::from(config.latitude(id));
+        let p = grid.direction(id).as_dvec3();
         let sample = |scale: f64, offset: f64| {
-            noise.get([
-                lon.cos() * scale + offset,
-                lon.sin() * scale,
-                lat * scale * 2.,
-            ]) as f32
+            noise.get([p.x * scale + offset, p.y * scale, p.z * scale]) as f32
         };
         let h = sample(1.3, 0.) * 0.65
             + sample(3., 0.) * 0.24
@@ -65,12 +62,12 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
             cell.biome = Biome::Sea;
         }
     }
-    drain(&config, &mut cells);
+    drain(&grid, &mut cells);
     for (id, cell) in cells.iter_mut().enumerate() {
         if cell.biome.water() {
             continue;
         }
-        let t = annual_temperature(&config, id as u32, cell.elevation);
+        let t = annual_temperature(&config, &grid, id as u32, cell.elevation);
         cell.moisture = (cell.moisture + (cell.river / 100.).min(0.25)).min(1.);
         cell.biome = if t < -12. {
             Biome::Ice
@@ -96,6 +93,7 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
         version: SAVE_VERSION,
         rng: Rng::new(config.seed),
         config,
+        grid,
         day: 0,
         cells,
         herds: Vec::new(),
@@ -112,11 +110,15 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
 
 /// Every land cell has a downstream parent earlier in flood order: no cycles,
 /// even in depressions. Accumulation is a single reverse traversal, not path tracing.
-fn drain(config: &PlanetConfig, cells: &mut [Cell]) {
+fn drain(grid: &Grid, cells: &mut [Cell]) {
     let mut queue = BinaryHeap::new();
     let mut seen = vec![false; cells.len()];
     let mut order = Vec::with_capacity(cells.len());
-    let mut runoff: Vec<f32> = cells.iter().map(|c| c.moisture.max(0.1)).collect();
+    let mut runoff: Vec<f32> = cells
+        .iter()
+        .enumerate()
+        .map(|(id, c)| c.moisture.max(0.1) * grid.area_factor(id as u32))
+        .collect();
     for (i, cell) in cells.iter().enumerate() {
         if cell.biome.water() {
             seen[i] = true;
@@ -125,7 +127,7 @@ fn drain(config: &PlanetConfig, cells: &mut [Cell]) {
     }
     while let Some(Reverse((filled, id))) = queue.pop() {
         order.push(id);
-        for n in config.neighbors(id) {
+        for n in grid.neighbors(id) {
             let i = n as usize;
             if seen[i] {
                 continue;
@@ -151,10 +153,8 @@ fn drain(config: &PlanetConfig, cells: &mut [Cell]) {
     }
 }
 
-fn annual_temperature(config: &PlanetConfig, id: CellId, elevation: i32) -> f32 {
-    config.temperature
-        - 52. * config.latitude(id).abs().powf(1.35)
-        - elevation.max(0) as f32 * 0.0065
+fn annual_temperature(config: &PlanetConfig, grid: &Grid, id: CellId, elevation: i32) -> f32 {
+    config.temperature - 52. * grid.cooling(id) - elevation.max(0) as f32 * 0.0065
 }
 
 /// Daily weather varies smoothly across space; opposing hemispheres have opposite seasons.
@@ -165,24 +165,16 @@ pub fn update_environment(world: &mut World, initialize: bool) {
         * std::f32::consts::TAU;
     let seasonal = phase.sin() * c.axial_tilt * 0.65;
     let area = (c.cell_km / 20.).powi(2);
-    // Cache row/column terms to avoid trigonometry for every cell every day.
-    let rows: Vec<_> = (0..c.height)
-        .map(|y| {
-            let lat = c.latitude(y * c.width);
-            (
-                c.temperature - 52. * lat.abs().powf(1.35) + seasonal * lat,
-                (lat * 13. + world.day as f32 * 0.09).sin(),
-            )
-        })
-        .collect();
-    let cols: Vec<_> = (0..c.width)
-        .map(|x| {
-            (x as f32 / c.width as f32 * std::f32::consts::TAU * 3. + world.day as f32 * 0.13).sin()
-        })
-        .collect();
+    // Smooth 3D pressure fronts cross all face seams and both poles. Only three
+    // trigonometric operations per day; static latitude terms live in the grid.
+    let day = (world.day % 1_000_000) as f32;
+    let (wind_sin, wind_cos) = (day * 0.13).sin_cos();
+    let front = (day * 0.09).sin();
     for (id, cell) in world.cells.iter_mut().enumerate() {
-        let (base, front) = rows[id / c.width as usize];
-        let storm = (front * 0.4 + cols[id % c.width as usize] * 0.6).max(0.);
+        let p = world.grid.direction(id as u32);
+        let base = c.temperature - 52. * world.grid.cooling(id as u32)
+            + seasonal * world.grid.latitude(id as u32);
+        let storm = ((p.x * wind_cos + p.z * wind_sin) * 0.7 + (p.y * front).abs() * 0.3).max(0.);
         let t = base - cell.elevation.max(0) as f32 * 0.0065 + (storm - 0.3) * 5.;
         let precipitation = storm * cell.moisture * 8. * c.rainfall;
         let w = &mut cell.weather;
@@ -201,7 +193,7 @@ pub fn update_environment(world: &mut World, initialize: bool) {
         }
         let warmth = ((t + 8.) / 25.).clamp(0.02, 1.) * ((55. - t) / 15.).clamp(0.05, 1.);
         let growing = warmth * (0.25 + w.soil_moisture * 0.75) * (1. - w.snow * 0.9);
-        let capacity = cell.biome.fertility() * area;
+        let capacity = cell.biome.fertility() * area * world.grid.area_factor(id as u32);
         let fruiting = ((t - 8.) / 16.).clamp(0., 1.);
         let targets = [
             capacity * (0.15 + growing) * 10000.,
@@ -245,7 +237,10 @@ fn populate(world: &mut World) -> Result<(), String> {
     }
     for &id in &land {
         let cell = &world.cells[id as usize];
-        if !world.rng.chance(cell.biome.fertility() * 0.10) {
+        if !world
+            .rng
+            .chance(cell.biome.fertility() * 0.10 * world.grid.area_factor(id))
+        {
             continue;
         }
         let species = if cell.weather.temperature < 7. {
@@ -278,19 +273,19 @@ fn populate(world: &mut World) -> Result<(), String> {
         ];
         let people = Demography { female, male };
         let specialists = Specialists::from_adults(people.adults());
-        let x = (id % world.config.width) as f32 / world.config.width as f32 * 12.;
-        let y = (id / world.config.width) as f32 / world.config.height as f32 * 6.;
-        let mut languages = Vec::new();
-        for (dx, wx) in [(0, 1. - x.fract()), (1, x.fract())] {
-            for (dy, wy) in [(0, 1. - y.fract()), (1, y.fract())] {
-                let share = wx * wy;
-                if share > 0. {
-                    languages.push(Language {
-                        family: (y as u32 + dy) * 12 + (x as u32 + dx) % 12,
-                        share,
-                    });
-                }
-            }
+        // Language affinity follows spherical distance, including across poles.
+        let p = world.grid.direction(id);
+        let mut languages: Vec<_> = (0..12)
+            .map(|family| Language {
+                family,
+                share: 1. / (0.03 + 1. - p.dot(world.grid.direction(family))).powi(2),
+            })
+            .collect();
+        languages.sort_by(|a, b| b.share.total_cmp(&a.share).then(a.family.cmp(&b.family)));
+        languages.truncate(4);
+        let total: f32 = languages.iter().map(|l| l.share).sum();
+        for l in &mut languages {
+            l.share /= total;
         }
         world.tribes.push(Tribe {
             id: world.tribes.len() as u32,
@@ -312,8 +307,7 @@ mod tests {
     use super::*;
     fn config() -> PlanetConfig {
         PlanetConfig {
-            width: 48,
-            height: 32,
+            resolution: 12,
             cell_km: 20.,
             temperature: 28.,
             season_days: 30,
@@ -347,11 +341,17 @@ mod tests {
         let mut w = generate(config()).unwrap();
         w.day = 30;
         update_environment(&mut w, true);
-        let summer = w.cells[8 * 48].weather.temperature;
-        let south_winter = w.cells[23 * 48].weather.temperature;
+        let north = (0..w.cells.len())
+            .find(|&i| w.grid.latitude(i as u32) > 0.55)
+            .unwrap();
+        let south = (0..w.cells.len())
+            .find(|&i| w.grid.latitude(i as u32) < -0.55)
+            .unwrap();
+        let summer = w.cells[north].weather.temperature;
+        let south_winter = w.cells[south].weather.temperature;
         w.day = 90;
         update_environment(&mut w, true);
-        assert!(summer > w.cells[8 * 48].weather.temperature + 10.);
-        assert!(south_winter < w.cells[23 * 48].weather.temperature - 10.);
+        assert!(summer > w.cells[north].weather.temperature + 10.);
+        assert!(south_winter < w.cells[south].weather.temperature - 10.);
     }
 }

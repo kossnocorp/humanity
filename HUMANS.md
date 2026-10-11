@@ -10,7 +10,7 @@ From the repository root:
 
 ```sh
 cargo run -p humanity-cli -- \
-  --width 128 --height 64 --temperature 28 \
+  --resolution 28 --temperature 28 \
   --season-days 90 --population 6000 --seed 42
 ```
 
@@ -24,15 +24,15 @@ With mise installed, `mise run play`, `mise run simulate`, and `mise run check` 
 |---|---|
 | Space | Pause / resume |
 | `-` / `+` (`=` also works) | Halve / double days per second, 0.25–256 |
-| Arrow keys | Pan |
-| Left-click + drag | Pan |
+| Arrow keys | Rotate the globe |
+| Left-click + drag | Rotate freely, including across the poles |
 | Wheel / trackpad scroll | Zoom around the pointer |
-| Click a hex | Inspect climate, resources, bands, demographics, languages |
+| Click a surface cell | Inspect climate, resources, bands, demographics, languages |
 | S | Atomically save to `--save` (default `saves/world.json`) |
 | L | Restore that snapshot, paused |
 | Tab | Biomes/snow → temperature → edible resources |
 | F | Follow the next human band as it moves; arrows/drag/click/Home release it |
-| Home | Fit the planet in the atlas |
+| Home | Return to whole-globe distance |
 | `?` (Shift+/ on US keyboards) | Open/close live population insights; Esc also closes |
 
 ### Population insights
@@ -41,18 +41,19 @@ The `?` screen charts population, births/deaths, lifetime death causes, and curr
 
 Deaths are tracked as nutrition/poor-health mortality, background mortality, additional elder mortality, or conflict casualties. The shared background/health death roll is attributed proportionally to those risks using a separate deterministic random stream, preserving gameplay outcomes. Cold/snow affect food access and demand; they are not separate direct death causes in this model. Poor health can also reflect conflict injuries.
 
-Diagnostics persist in saves: the last 720 daily samples, lifetime cause totals, and 128 recent death groups. Older saves start history when loaded and label previous deaths **unrecorded**, without inventing causes or past charts. `--inspect` and headless JSON summaries also include cause totals.
+Diagnostics persist in saves: the last 720 daily samples, lifetime cause totals, and 128 recent death groups. Spherical saves lacking diagnostics start history when loaded and label previous deaths **unrecorded**, without inventing causes or past charts. `--inspect` and headless JSON summaries also include cause totals.
 
-Cream camp icons are mobile human bands, not settlements. Ochre animal icons are herds. Rivers are blue lines; snow lightens the ground. The header names the **northern** season; the southern hemisphere has the opposite season. Temperature overlay runs blue → red; resource overlay brown → green. Extremely distant zoom uses sampled regional blocks; zoom in for exact hexes and rivers.
+Cream camp icons are mobile human bands, not settlements. Ochre animal icons are herds. Rivers follow the curved surface; snow lightens the ground. The header names the **northern** season; the southern hemisphere has the opposite season. Temperature overlay runs blue → red; resource overlay brown → green. Large planets use a coarse globe at orbital distance; zoom in for exact cells and rivers. `F` moves close to the next band and follows it; `--follow-band 0` starts following band 0.
 
 ### Planet arguments
 
-For a new world, **all five** of `--width`, `--height`, `--temperature`, `--season-days`, and `--population` are required. `--load` and `--inspect` use the saved configuration instead.
+For a new world, `--resolution`, `--temperature`, `--season-days`, and `--population` are required. `--load` and `--inspect` use the saved configuration instead.
 
 | Argument | Meaning / default |
 |---|---|
-| `--width`, `--height` | Hex columns and rows; at least 24×16, even height, maximum 4 million cells |
-| `--cell-km` | Neighbor-center distance in km, 20; scales resource capacity and travel time |
+| `--resolution` | Icosahedron edge subdivisions, 2…632; cell count = `10 × resolution² + 2` |
+| `--cell-km` | Mean neighbor-center spacing in km, 20; determines physical radius at this resolution |
+| `--radius-km` | Optional physical planet radius instead of `--cell-km`; derived spacing must be 1…200 km |
 | `--temperature` | Annual equatorial sea-level Celsius, solar-heating proxy; −30…60 |
 | `--season-days` | Days in each of four seasons, 4…1000 |
 | `--population` | Initial people, 1…100 million; aggregate cohorts, not individual entities |
@@ -62,7 +63,13 @@ For a new world, **all five** of `--width`, `--height`, `--temperature`, `--seas
 | `--seed` | Reproducible terrain and simulation seed, 42 |
 | `--save` | Snapshot destination and in-game S/L path, `saves/world.json` |
 
-East/west wrap, north/south stop at the poles. This first atlas is a cylindrical approximation, not spherical geometry: equal-area hexes and latitude bands do not model polar convergence. Approximate circumference is `width × cell-km`; pole-to-pole span is `height × cell-km × sqrt(3)/2`. Climate, elevation, snow, precipitation, water, plant stocks and grazing constrain movement and survival. Some extreme configurations can be uninhabitable and are rejected at generation.
+### The spherical grid
+
+The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with every remaining cell a hexagon. Shared spherical circumcenters form the borders. There are no artificial seams or polar boundaries. The simulation uses the same graph as the 3D meshes; rivers, migrations, and tribal contacts cross all 20 base faces normally. Resource capacity accounts for actual spherical cell areas, and travel costs use great-circle neighbor distances. Hexagons are not perfectly regular or equal-area.
+
+Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
+
+**Save format v2:** the spherical topology changes cell IDs and geography. Cylindrical v1 snapshots are rejected with an explanation; start a new planet. The deterministic grid is rebuilt from its resolution when loading rather than storing redundant geometry in JSON.
 
 ## Headless runs, resume, inspect
 
@@ -70,7 +77,7 @@ This command **does not compile Bevy or initialize a GPU**:
 
 ```sh
 cargo run -p humanity-cli --no-default-features -- \
-  --headless --width 128 --height 64 --temperature 28 \
+  --headless --resolution 28 --temperature 28 \
   --season-days 90 --population 6000 --seed 42 \
   --days 720 --report-every 180 --save saves/two-years.json
 
@@ -102,7 +109,7 @@ print('recent events:', w['events'][-5:])
 PY
 ```
 
-For a larger workload use `--width 512 --height 256 --population 1000000`. Prefer `--release` for extended runs. Oversupplying population can exhaust wildlife and trigger starvation/conflict; population is not guaranteed to survive or grow. Snapshots are intentionally inspectable rather than compressed; very large worlds produce large files.
+For a larger workload use `--resolution 128 --population 1000000`. Prefer `--release` for extended runs. Oversupplying population can exhaust wildlife and trigger starvation/conflict; population is not guaranteed to survive or grow. Snapshots are intentionally inspectable rather than compressed; very large worlds produce large files.
 
 ## Development
 
@@ -112,7 +119,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
 # Fast, renderer-free test cycle:
-cargo test -p humanity-core -p humanity-world -p humanity-sim -p humanity-save
+cargo test -p humanity-grid -p humanity-core -p humanity-world -p humanity-sim -p humanity-save
 
 # Render smoke test: capture after startup and exit; requires a display.
 cargo run -p humanity-cli -- \
@@ -123,13 +130,14 @@ cargo run -p humanity-cli -- \
 
 | Crate | Responsibility |
 |---|---|
-| `humanity-core` | Compact state, units, hex topology, serializable deterministic RNG |
+| `humanity-grid` | Geodesic topology, spherical geometry, areas, neighbor queries and picking |
+| `humanity-core` | Compact state, units, serializable deterministic RNG |
 | `humanity-world` | Periodic terrain, acyclic drainage/lakes, biomes, daily weather, renewable ecology, initial seeding |
 | `humanity-sim` | Daily phases, sparse spatial indexes, herd/tribe decisions, hunting, contact, demography |
 | `humanity-save` | Snapshot validation, atomic persistence, inspection summaries |
-| `humanity-view` | Bevy map, camera, UI, embedded self-authored SVG icons |
+| `humanity-view` | Bevy 3D globe, orbit camera, UI, embedded self-authored SVG billboard icons |
 | `humanity-cli` | Required arguments, headless execution, optional viewer |
 
-Daily work is linear in cells plus spatially indexed aggregate agents; local encounters are sampled with bounded work rather than all-pairs comparisons. No entity per person or terrain hex. Rendering culls terrain to the viewport, bounds displayed detail, and batches terrain into meshes. The viewer budgets simulation steps per frame; requested speed may exceed achievable speed on very large worlds. Simulation is single-threaded for deterministic ordering; same-build save/resume is tested byte-for-byte equivalent at the state level.
+Daily work is linear in cells plus spatially indexed aggregate agents; local encounters are sampled with bounded work rather than all-pairs comparisons. No entity per person or terrain cell. The grid's immutable geometry is shared on clone. Rendering keeps a bounded coarse globe and traverses only a spherical cap for detailed nearby terrain, batching it into meshes. Billboard icons use depth testing and horizon culling. The viewer budgets simulation steps per frame; requested speed may exceed achievable speed on very large worlds. Simulation is single-threaded for deterministic ordering; same-build save/resume is tested byte-for-byte equivalent at the state level.
 
 Prototype approximations: climate and demography are stylized, not scientific forecasts. Seas are shallow ocean margins. River channels use accumulated climatological catchments, not daily fluid simulation. Cell plants, fruit/seeds, small game and grazing are aggregate stocks; herds are reindeer, bison or antelope. Language families mix through peaceful contact. Demography uses female/male child/adult/elder cohorts, with derived labor roles. Events resolve using stored probabilities; conflict events record the winner's combat probability. No boats, farming, settlements, band fission, individual genealogy, or historical language naming yet.

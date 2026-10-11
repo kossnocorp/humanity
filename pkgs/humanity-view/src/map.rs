@@ -1,153 +1,251 @@
 use crate::{assets::Icons, *};
 use bevy::{
-    asset::RenderAssetUsages, camera::visibility::NoFrustumCulling, mesh::Indices,
+    asset::RenderAssetUsages, camera::visibility::NoFrustumCulling,
+    core_pipeline::tonemapping::Tonemapping, mesh::Indices,
     render::render_resource::PrimitiveTopology, window::PrimaryWindow,
 };
-use humanity_core::{Biome, Cell, PlanetConfig};
+use humanity_core::{Biome, Cell};
+use humanity_grid::Grid;
+use std::collections::{HashSet, VecDeque};
 
-#[derive(Resource)]
-pub struct MapMeshes {
-    ground: Handle<Mesh>,
-    detail: Handle<Mesh>,
-}
 #[derive(Component)]
 pub struct Marker;
+#[derive(Component)]
+pub struct GlobeLight;
+#[derive(Resource)]
+pub struct MapMeshes {
+    base: Handle<Mesh>,
+    detail: Handle<Mesh>,
+    rivers: Handle<Mesh>,
+    quad: Handle<Mesh>,
+    tribe: Handle<StandardMaterial>,
+    herd: Handle<StandardMaterial>,
+    forest: Handle<StandardMaterial>,
+    mountain: Handle<StandardMaterial>,
+    coarse: Grid,
+    coarse_cells: Vec<u32>,
+    revision: u64,
+    base_day: u64,
+    base_layer: &'static str,
+}
 
-pub fn follow_band(
+pub fn cell_spacing(world: &World) -> f32 {
+    PLANET_RADIUS * world.config.cell_km / world.config.radius_km()
+}
+
+/// The camera orbits with a quaternion, so neither pole is singular or bounded.
+pub fn orbit_camera(
     game: Res<Game>,
     mut view: ResMut<ViewState>,
-    mut camera: Single<(&mut Transform, &Projection), With<Camera2d>>,
+    mut camera: Single<&mut Transform, (With<Camera3d>, Without<GlobeLight>)>,
+    mut lights: Query<&mut Transform, (With<GlobeLight>, Without<Camera3d>)>,
 ) {
-    let Some(id) = view.following else {
-        return;
-    };
-    let Some(tribe) = game.world.tribes.iter().find(|t| t.id == id) else {
-        view.following = None;
-        view.status = format!("Band {id} no longer exists. F follows another band.");
-        return;
-    };
-    let (transform, projection) = &mut *camera;
-    let Projection::Orthographic(ortho) = projection else {
-        return;
-    };
-    let p = position(tribe.cell, &game.world.config);
-    // Center in the unobscured map area, accounting for the right field notes.
-    let x = (p.x + 175. * ortho.scale).rem_euclid(game.world.config.width as f32 * HEX_WIDTH);
-    let y = p.y + 19. * ortho.scale;
-    if transform.translation.x != x
-        || transform.translation.y != y
-        || view.selected != Some(tribe.cell)
-    {
-        transform.translation.x = x;
-        transform.translation.y = y;
-        view.selected = Some(tribe.cell);
-        view.dirty = true;
-    }
-    view.status = format!(
-        "Following band {id} / {} people. F next band; pan to release.",
-        tribe.headcount()
-    );
-}
-
-pub fn position(id: CellId, c: &PlanetConfig) -> Vec2 {
-    let y = id / c.width;
-    Vec2::new(
-        (id % c.width) as f32 * HEX_WIDTH + (y % 2) as f32 * HEX_WIDTH * 0.5,
-        -(y as f32) * RADIUS * 1.5,
-    )
-}
-
-pub fn cell_at(p: Vec2, c: &PlanetConfig) -> Option<CellId> {
-    let row = (-p.y / (RADIUS * 1.5)).round() as i32;
-    let mut nearest = None;
-    let mut distance = RADIUS * RADIUS * 1.1;
-    for y in row - 1..=row + 1 {
-        if y < 0 || y >= c.height as i32 {
-            continue;
-        }
-        let col = (p.x / HEX_WIDTH - (y % 2) as f32 * 0.5).round() as i32;
-        for x in col - 1..=col + 1 {
-            let center = Vec2::new(
-                (x as f32 + (y % 2) as f32 * 0.5) * HEX_WIDTH,
-                -y as f32 * RADIUS * 1.5,
-            );
-            let d = center.distance_squared(p);
-            if d < distance {
-                distance = d;
-                nearest = Some(y as u32 * c.width + x.rem_euclid(c.width as i32) as u32);
+    if let Some(id) = view.following {
+        if let Some(tribe) = game.world.tribes.iter().find(|t| t.id == id) {
+            let direction = game.world.grid.direction(tribe.cell);
+            let previous = view.orbit * Vec3::Z;
+            if previous.distance_squared(direction) > 1e-12 || view.selected != Some(tribe.cell) {
+                view.orbit =
+                    (Quat::from_rotation_arc(previous, direction) * view.orbit).normalize();
+                view.selected = Some(tribe.cell);
+                view.dirty = true;
             }
+            view.status = format!(
+                "Following band {id} / {} people. F next band; rotate to release.",
+                tribe.headcount()
+            );
+        } else {
+            view.following = None;
+            view.status = format!("Band {id} no longer exists. F follows another band.");
         }
     }
-    nearest
+    camera.translation = view.orbit * Vec3::Z * view.distance;
+    camera.rotation = view.orbit;
+    // Readable observation lighting, not an extra simulation day/night mechanic.
+    for mut light in &mut lights {
+        *light =
+            Transform::from_translation(view.orbit * Vec3::new(-0.7, 0.9, 1.4) * PLANET_RADIUS)
+                .looking_at(Vec3::ZERO, view.orbit * Vec3::Y);
+    }
+}
+
+pub fn screen_to_sphere(cursor: Vec2, size: Vec2, orbit: Quat, distance: f32) -> Option<Vec3> {
+    if size.x <= 0. || size.y <= 0. {
+        return None;
+    }
+    let ndc = Vec2::new(cursor.x / size.x * 2. - 1., 1. - cursor.y / size.y * 2.);
+    let tan = (CAMERA_FOV * 0.5).tan();
+    let ray = orbit * Vec3::new(ndc.x * size.x / size.y * tan, ndc.y * tan, -1.).normalize();
+    ray_sphere(orbit * Vec3::Z * distance, ray)
+}
+
+fn ray_sphere(origin: Vec3, direction: Vec3) -> Option<Vec3> {
+    // Double precision keeps very close surface picks stable on large grids.
+    let o = origin.as_dvec3();
+    let d = direction.as_dvec3();
+    let b = o.dot(d);
+    let c = o.length_squared() - f64::from(PLANET_RADIUS).powi(2);
+    let a = d.length_squared();
+    let discriminant = b * b - a * c;
+    if discriminant < 0. {
+        return None;
+    }
+    let distance = (-b - discriminant.sqrt()) / a;
+    if distance < 0. {
+        return None;
+    }
+    Some((o + d * distance).normalize().as_vec3())
 }
 
 pub fn setup(
     mut commands: Commands,
     game: Res<Game>,
     mut view: ResMut<ViewState>,
+    icons: Res<Icons>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let focus = game
-        .world
-        .tribes
-        .iter()
-        .max_by_key(|t| t.headcount())
+    let world = &game.world;
+    let focus = view
+        .following
+        .and_then(|id| world.tribes.iter().find(|t| t.id == id))
+        .or_else(|| world.tribes.iter().max_by_key(|t| t.headcount()))
         .map_or(0, |t| t.cell);
-    let p = position(focus, &game.world.config);
+    if view.following.is_some() {
+        view.distance = PLANET_RADIUS
+            + (cell_spacing(world) * 12.).clamp(PLANET_RADIUS * 0.025, PLANET_RADIUS * 1.4);
+    }
     view.selected = Some(focus);
+    view.orbit = Quat::from_rotation_arc(Vec3::Z, world.grid.direction(focus));
+    view.status =
+        "3D globe / drag or arrows to rotate; F follows a band; click a cell to inspect.".into();
     commands.spawn((
-        Camera2d,
-        Transform::from_xyz(p.x + 130., p.y, 1000.),
-        Projection::Orthographic(OrthographicProjection {
-            scale: 0.9,
-            ..OrthographicProjection::default_2d()
+        Camera3d::default(),
+        Tonemapping::None,
+        Projection::Perspective(PerspectiveProjection {
+            fov: CAMERA_FOV,
+            near: 0.01,
+            far: PLANET_RADIUS * 30.,
+            ..default()
         }),
+        Transform {
+            translation: view.orbit * Vec3::Z * view.distance,
+            rotation: view.orbit,
+            ..default()
+        },
     ));
-    let ground = meshes.add(Geometry::default().mesh());
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::WHITE,
+        brightness: 550.,
+        ..default()
+    });
+    commands.spawn((
+        GlobeLight,
+        DirectionalLight {
+            illuminance: 6500.,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::default(),
+    ));
+    let base = meshes.add(Geometry::default().mesh());
     let detail = meshes.add(Geometry::default().mesh());
-    let material = materials.add(ColorMaterial::from(Color::WHITE));
-    for (mesh, z) in [(&ground, 0.), (&detail, 1.)] {
+    let rivers = meshes.add(Geometry::default().mesh());
+    let ground_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 1.,
+        reflectance: 0.,
+        ..default()
+    });
+    let line_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        ..default()
+    });
+    for (mesh, material) in [
+        (&base, &ground_material),
+        (&detail, &ground_material),
+        (&rivers, &line_material),
+    ] {
         commands.spawn((
-            Mesh2d(mesh.clone()),
-            MeshMaterial2d(material.clone()),
-            Transform::from_xyz(0., 0., z),
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material.clone()),
+            Transform::default(),
             NoFrustumCulling,
         ));
     }
-    commands.insert_resource(MapMeshes { ground, detail });
+    let mut icon_material = |image: &Handle<Image>| {
+        materials.add(StandardMaterial {
+            base_color_texture: Some(image.clone()),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            cull_mode: None,
+            ..default()
+        })
+    };
+    let coarse = Grid::new(world.config.resolution.min(28)).expect("validated resolution");
+    let coarse_cells = (0..coarse.len() as u32)
+        .map(|i| world.grid.nearest(coarse.direction(i)))
+        .collect();
+    commands.insert_resource(MapMeshes {
+        base,
+        detail,
+        rivers,
+        quad: meshes.add(Rectangle::new(1., 1.)),
+        tribe: icon_material(&icons.tribe),
+        herd: icon_material(&icons.herd),
+        forest: icon_material(&icons.forest),
+        mountain: icon_material(&icons.mountain),
+        coarse,
+        coarse_cells,
+        revision: view.snapshot_revision,
+        base_day: u64::MAX,
+        base_layer: "",
+    });
 }
 
 #[derive(Default)]
 struct Geometry {
     positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
     indices: Vec<u32>,
 }
 impl Geometry {
-    fn polygon(&mut self, vertices: &[Vec2], color: [f32; 3]) {
+    fn vertex(&mut self, p: Vec3, color: [f32; 3]) {
+        self.positions.push(p.to_array());
+        self.normals.push(p.normalize().to_array());
+        self.colors.push(
+            Color::srgb(color[0], color[1], color[2])
+                .to_linear()
+                .to_f32_array(),
+        );
+    }
+    fn cell(&mut self, grid: &Grid, id: u32, radius: f32, color: [f32; 3], inset: f32) {
+        let center = grid.direction(id);
         let start = self.positions.len() as u32;
-        let linear = Color::srgb(color[0], color[1], color[2])
-            .to_linear()
-            .to_f32_array();
-        for p in vertices {
-            self.positions.push([p.x, p.y, 0.]);
-            self.colors.push(linear);
+        self.vertex(center * radius, color);
+        for corner in grid.corners(id) {
+            self.vertex(center.lerp(corner, inset).normalize() * radius, color);
         }
-        for i in 1..vertices.len() as u32 - 1 {
-            self.indices.extend([start, start + i, start + i + 1]);
+        let count = grid.degree(id) as u32;
+        for i in 0..count {
+            self.indices
+                .extend([start, start + 1 + i, start + 1 + (i + 1) % count]);
         }
     }
-    fn hex(&mut self, center: Vec2, radius: f32, color: [f32; 3]) {
-        let points = std::array::from_fn::<_, 6, _>(|i| {
-            let angle = std::f32::consts::TAU * i as f32 / 6. + std::f32::consts::FRAC_PI_2;
-            center + Vec2::new(angle.cos(), angle.sin()) * radius
-        });
-        self.polygon(&points, color);
-    }
-    fn line(&mut self, a: Vec2, b: Vec2, width: f32, color: [f32; 3]) {
-        let d = (b - a).normalize_or_zero().perp() * width / 2.;
-        self.polygon(&[a - d, b - d, b + d, a + d], color);
+    fn line(&mut self, a: Vec3, b: Vec3, radius: f32, width: f32, color: [f32; 3]) {
+        for step in 0..3 {
+            let p = a.lerp(b, step as f32 / 3.).normalize() * radius;
+            let q = a.lerp(b, (step + 1) as f32 / 3.).normalize() * radius;
+            let side = (p + q).normalize().cross((q - p).normalize_or_zero()) * width * 0.5;
+            let start = self.positions.len() as u32;
+            for point in [p - side, q - side, q + side, p + side] {
+                self.vertex(point, color);
+            }
+            self.indices
+                .extend([start, start + 1, start + 2, start, start + 2, start + 3]);
+        }
     }
     fn mesh(self) -> Mesh {
         Mesh::new(
@@ -155,6 +253,7 @@ impl Geometry {
             RenderAssetUsages::default(),
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
         .with_inserted_indices(Indices::U32(self.indices))
     }
@@ -195,6 +294,29 @@ fn color(c: &Cell, layer: Layer) -> [f32; 3] {
     std::array::from_fn(|i| (base[i] + variation) * (1. - snow) + [0.88, 0.91, 0.86][i] * snow)
 }
 
+/// A spherical-cap traversal touches only the visible patch at close zoom.
+/// A bounded coarse globe remains behind it, so even multi-million-cell maps
+/// never require one entity or one permanently uploaded polygon per cell.
+fn visible_cells(grid: &Grid, axis: Vec3, threshold: f32, limit: usize) -> Vec<u32> {
+    let start = grid.nearest(axis);
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::from([start]);
+    let mut result = Vec::new();
+    seen.insert(start);
+    while let Some(id) = queue.pop_front() {
+        result.push(id);
+        if result.len() == limit {
+            break;
+        }
+        for next in grid.neighbors(id) {
+            if seen.insert(next) && grid.direction(next).dot(axis) >= threshold {
+                queue.push_back(next);
+            }
+        }
+    }
+    result
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn redraw(
     mut commands: Commands,
@@ -202,156 +324,204 @@ pub fn redraw(
     mut view: ResMut<ViewState>,
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Transform, &Projection), With<Camera2d>>,
-    handles: Res<MapMeshes>,
+    mut handles: ResMut<MapMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
-    icons: Res<Icons>,
     markers: Query<Entity, With<Marker>>,
 ) {
+    if view.insights_open {
+        return;
+    }
     if !view.dirty
         && (game.world.day == view.last_day || time.elapsed_secs_f64() - view.last_draw < 0.15)
     {
         return;
     }
-    let (transform, projection) = *camera;
-    let Projection::Orthographic(ortho) = projection else {
-        return;
-    };
     let world = &game.world;
-    let config = &world.config;
-    let extent =
-        Vec2::new(window.width(), window.height()) * ortho.scale * 0.5 + Vec2::splat(RADIUS * 2.);
-    let center = transform.translation.truncate();
-    let min = center - extent;
-    let max = center + extent;
-    let x0 = (min.x / HEX_WIDTH).floor() as i32 - 1;
-    let x1 = (max.x / HEX_WIDTH).ceil() as i32 + 1;
-    let y0 = ((-max.y / (RADIUS * 1.5)).floor() as i32 - 1).max(0);
-    let y1 = ((-min.y / (RADIUS * 1.5)).ceil() as i32 + 1).min(config.height as i32 - 1);
-    let count = ((x1 - x0 + 1).max(0) * (y1 - y0 + 1).max(0)) as usize;
-    let stride = ((count as f32 / 9000.).sqrt().ceil() as usize).max(1);
-    view.lod = stride;
-    let mut ground = Geometry::default();
+    if handles.revision != view.snapshot_revision {
+        handles.coarse = Grid::new(world.config.resolution.min(28)).expect("validated grid");
+        handles.coarse_cells = (0..handles.coarse.len() as u32)
+            .map(|i| world.grid.nearest(handles.coarse.direction(i)))
+            .collect();
+        handles.revision = view.snapshot_revision;
+        handles.base_day = u64::MAX;
+    }
+    if handles.base_day != world.day || handles.base_layer != view.layer.label() {
+        let mut base = Geometry::default();
+        for (id, &sample) in handles.coarse_cells.iter().enumerate() {
+            let rgb = color(&world.cells[sample as usize], view.layer);
+            base.cell(
+                &handles.coarse,
+                id as u32,
+                PLANET_RADIUS,
+                rgb.map(|v| v * 0.72),
+                1.,
+            );
+            base.cell(
+                &handles.coarse,
+                id as u32,
+                PLANET_RADIUS + 0.006,
+                rgb,
+                0.965,
+            );
+        }
+        *meshes.get_mut(&handles.base).unwrap() = base.mesh();
+        handles.base_day = world.day;
+        handles.base_layer = view.layer.label();
+    }
+    let spacing = cell_spacing(world);
+    let pixels = spacing / (view.distance - PLANET_RADIUS) * window.height()
+        / (2. * (CAMERA_FOV * 0.5).tan());
+    let detailed = world.config.resolution <= 28 || pixels > 8.;
+    view.lod = if detailed {
+        1
+    } else {
+        world.config.resolution.div_ceil(28) as usize
+    };
+    let axis = view.orbit * Vec3::Z;
+    let half_diagonal = ((CAMERA_FOV * 0.5).tan()
+        * (1. + (window.width() / window.height().max(1.)).powi(2)).sqrt())
+    .atan();
+    let horizon = (PLANET_RADIUS / view.distance).acos();
+    let cap = if view.distance * half_diagonal.sin() >= PLANET_RADIUS {
+        horizon
+    } else {
+        (view.distance / PLANET_RADIUS * half_diagonal.sin()).asin() - half_diagonal
+    };
+    let threshold = (cap + spacing / PLANET_RADIUS * 3.)
+        .min(std::f32::consts::FRAC_PI_2)
+        .cos();
+    let visible = if detailed {
+        visible_cells(&world.grid, axis, threshold, 24_000)
+    } else {
+        Vec::new()
+    };
+    if visible.len() == 24_000 {
+        view.lod = 2;
+    }
     let mut detail = Geometry::default();
+    let mut rivers = Geometry::default();
     for entity in &markers {
         commands.entity(entity).despawn();
     }
-    let mut decorations = 0;
-    for y in (y0..=y1).step_by(stride) {
-        for x in (x0..=x1).step_by(stride) {
-            let id = y as u32 * config.width + x.rem_euclid(config.width as i32) as u32;
-            let c = &world.cells[id as usize];
-            let p = Vec2::new(
-                (x as f32 + (y % 2) as f32 * 0.5) * HEX_WIDTH,
-                -y as f32 * RADIUS * 1.5,
-            );
+    let mut decoration_count = 0;
+    for &id in &visible {
+        let c = &world.cells[id as usize];
+        let p = world.grid.direction(id);
+        if world.config.resolution > 28 {
             let rgb = color(c, view.layer);
-            if stride == 1 {
-                ground.hex(p, RADIUS, rgb.map(|v| v * 0.82));
-                ground.hex(p, RADIUS * 0.956, rgb);
-                if c.river > 0.
-                    && let Some(to) = c.drainage
-                {
-                    let target = position(to, config);
-                    let local = position(id, config);
-                    let circumference = config.width as f32 * HEX_WIDTH;
-                    let dx = (target.x - local.x + circumference / 2.).rem_euclid(circumference)
-                        - circumference / 2.;
-                    let next = p + Vec2::new(dx, target.y - local.y);
-                    detail.line(
-                        p,
-                        next,
-                        (0.6 + c.river.ln() * 0.3).min(3.),
-                        [0.38, 0.72, 0.80],
-                    );
-                }
-                if ortho.scale < 1.6
-                    && decorations < 800
-                    && (id.is_multiple_of(3) || c.elevation > 1700)
-                    && matches!(view.layer, Layer::Biomes)
-                {
-                    let image = if c.elevation > 1700 {
-                        Some(&icons.mountain)
-                    } else if matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
-                        Some(&icons.forest)
-                    } else {
-                        None
-                    };
-                    if let Some(image) = image {
-                        spawn_icon(&mut commands, image, p, 19., 2.);
-                        decorations += 1;
-                    }
-                }
+            detail.cell(
+                &world.grid,
+                id,
+                PLANET_RADIUS + 0.03,
+                rgb.map(|v| v * 0.72),
+                1.,
+            );
+            detail.cell(&world.grid, id, PLANET_RADIUS + 0.04, rgb, 0.965);
+        }
+        if c.river > 0.
+            && let Some(to) = c.drainage
+        {
+            rivers.line(
+                p,
+                world.grid.direction(to),
+                PLANET_RADIUS + 0.065,
+                spacing * (0.025 + c.river.ln() * 0.012).min(0.15),
+                [0.35, 0.73, 0.86],
+            );
+        }
+        if pixels > 22.
+            && decoration_count < 500
+            && id.is_multiple_of(3)
+            && matches!(view.layer, Layer::Biomes)
+            && p.dot(axis) > PLANET_RADIUS / view.distance + 0.015
+        {
+            let material = if c.elevation > 1700 {
+                Some(&handles.mountain)
+            } else if matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
+                Some(&handles.forest)
             } else {
-                let a = Vec2::new(
-                    x as f32 * HEX_WIDTH - HEX_WIDTH / 2.,
-                    -y as f32 * RADIUS * 1.5 + RADIUS,
+                None
+            };
+            if let Some(material) = material {
+                spawn_icon(
+                    &mut commands,
+                    &handles.quad,
+                    material,
+                    p * (PLANET_RADIUS + spacing * 0.12),
+                    view.orbit,
+                    spacing * 0.42,
                 );
-                let b = a + Vec2::new(HEX_WIDTH * stride as f32, -RADIUS * 1.5 * stride as f32);
-                ground.polygon(&[Vec2::new(a.x, b.y), b, Vec2::new(b.x, a.y), a], rgb);
-            }
-            if view.selected == Some(id) && stride == 1 {
-                for i in 0..6 {
-                    let a = std::f32::consts::TAU * i as f32 / 6. + std::f32::consts::FRAC_PI_2;
-                    let b = a + std::f32::consts::TAU / 6.;
-                    detail.line(
-                        p + Vec2::new(a.cos(), a.sin()) * RADIUS * 0.97,
-                        p + Vec2::new(b.cos(), b.sin()) * RADIUS * 0.97,
-                        1.7 * ortho.scale.max(0.5),
-                        [1., 0.89, 0.58],
-                    );
-                }
+                decoration_count += 1;
             }
         }
     }
-    let circumference = config.width as f32 * HEX_WIDTH;
-    let mut visible = 0;
-    for (cell, image, offset, z) in world
-        .herds
-        .iter()
-        .map(|h| (h.cell, &icons.herd, Vec2::new(5., -4.), 4.))
-        .chain(
-            world
-                .tribes
-                .iter()
-                .map(|t| (t.cell, &icons.tribe, Vec2::new(-4., 5.), 5.)),
-        )
+    if let Some(id) = view
+        .selected
+        .filter(|&id| (id as usize) < world.cells.len())
     {
-        if visible >= 2400 {
+        let corners: Vec<_> = world.grid.corners(id).collect();
+        for i in 0..corners.len() {
+            rivers.line(
+                corners[i],
+                corners[(i + 1) % corners.len()],
+                PLANET_RADIUS + 0.09,
+                spacing * 0.055,
+                [1., 0.88, 0.49],
+            );
+        }
+    }
+    let mut count = 0;
+    for (cell, material, side) in world
+        .tribes
+        .iter()
+        .map(|t| (t.cell, &handles.tribe, -1.))
+        .chain(world.herds.iter().map(|h| (h.cell, &handles.herd, 1.)))
+    {
+        if count >= 2200 {
             break;
         }
-        let p = position(cell, config);
-        let x = center.x + (p.x - center.x + circumference / 2.).rem_euclid(circumference)
-            - circumference / 2.;
-        let p = Vec2::new(x, p.y);
-        if p.x < min.x || p.x > max.x || p.y < min.y || p.y > max.y {
+        let p = world.grid.direction(cell);
+        if p.dot(axis) < (PLANET_RADIUS / view.distance + 0.02).max(threshold) {
             continue;
         }
+        let size = (spacing * 0.55)
+            .max((view.distance - PLANET_RADIUS) * 0.008)
+            .min(spacing * 1.2);
+        let offset = view.orbit * Vec3::X * spacing * 0.16 * side;
         spawn_icon(
             &mut commands,
-            image,
-            p + offset,
-            (20. * ortho.scale.sqrt()).clamp(12., 60.),
-            z,
+            &handles.quad,
+            material,
+            p * (PLANET_RADIUS + size * 0.35) + offset,
+            view.orbit,
+            size,
         );
-        visible += 1;
+        count += 1;
     }
-    *meshes.get_mut(&handles.ground).expect("ground mesh") = ground.mesh();
-    *meshes.get_mut(&handles.detail).expect("detail mesh") = detail.mesh();
+    *meshes.get_mut(&handles.detail).unwrap() = detail.mesh();
+    *meshes.get_mut(&handles.rivers).unwrap() = rivers.mesh();
     view.dirty = false;
     view.last_day = world.day;
     view.last_draw = time.elapsed_secs_f64();
 }
 
-fn spawn_icon(commands: &mut Commands, image: &Handle<Image>, p: Vec2, size: f32, z: f32) {
+fn spawn_icon(
+    commands: &mut Commands,
+    mesh: &Handle<Mesh>,
+    material: &Handle<StandardMaterial>,
+    p: Vec3,
+    rotation: Quat,
+    size: f32,
+) {
     commands.spawn((
         Marker,
-        Sprite {
-            image: image.clone(),
-            custom_size: Some(Vec2::splat(size)),
-            ..default()
+        Mesh3d(mesh.clone()),
+        MeshMaterial3d(material.clone()),
+        Transform {
+            translation: p,
+            rotation,
+            scale: Vec3::splat(size),
         },
-        Transform::from_xyz(p.x, p.y, z),
     ));
 }
 
@@ -359,11 +529,9 @@ fn spawn_icon(commands: &mut Commands, image: &Handle<Image>, p: Vec2, size: f32
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
-    #[test]
-    fn follow_tracks_a_stable_band_id_across_movement_zoom_and_extinction() {
-        let world = humanity_world::generate(PlanetConfig {
-            width: 24,
-            height: 16,
+    fn world() -> World {
+        humanity_world::generate(humanity_core::PlanetConfig {
+            resolution: 6,
             cell_km: 20.,
             temperature: 28.,
             season_days: 30,
@@ -373,7 +541,37 @@ mod tests {
             population: 500,
             seed: 42,
         })
-        .unwrap();
+        .unwrap()
+    }
+    #[test]
+    fn sphere_picking_uses_the_front_surface_at_every_cell_including_pentagons() {
+        let w = world();
+        let size = Vec2::new(1440., 900.);
+        for id in 0..w.grid.len() as u32 {
+            let q = Quat::from_rotation_arc(Vec3::Z, w.grid.direction(id));
+            let p = screen_to_sphere(size * 0.5, size, q, PLANET_RADIUS * 3.).unwrap();
+            assert_eq!(w.grid.nearest(p), id);
+        }
+        assert!(screen_to_sphere(Vec2::ZERO, size, Quat::IDENTITY, PLANET_RADIUS * 3.).is_none());
+        assert!(ray_sphere(Vec3::Z * 300., Vec3::Z).is_none());
+        let orbit = Quat::from_rotation_y(0.7) * Quat::from_rotation_x(-0.4);
+        let origin = orbit * Vec3::Z * PLANET_RADIUS * 3.;
+        let tan = (CAMERA_FOV * 0.5).tan();
+        for id in 0..w.grid.len() as u32 {
+            let direction = w.grid.direction(id);
+            if direction.dot(origin.normalize()) < 0.5 {
+                continue;
+            }
+            let p = orbit.conjugate() * (direction * PLANET_RADIUS - origin);
+            let ndc = Vec2::new(p.x / (-p.z * tan * size.x / size.y), p.y / (-p.z * tan));
+            let cursor = Vec2::new((ndc.x + 1.) * 0.5 * size.x, (1. - ndc.y) * 0.5 * size.y);
+            let picked = screen_to_sphere(cursor, size, orbit, PLANET_RADIUS * 3.).unwrap();
+            assert_eq!(w.grid.nearest(picked), id, "off-center perspective pick");
+        }
+    }
+    #[test]
+    fn follow_uses_stable_ids_and_crosses_poles_without_a_camera_singularity() {
+        let world = world();
         let id = world.tribes[0].id;
         let mut app = App::new();
         app.insert_resource(Game {
@@ -382,76 +580,40 @@ mod tests {
         });
         app.insert_resource(ViewState {
             following: Some(id),
+            distance: PLANET_RADIUS * 1.2,
+            orbit: Quat::IDENTITY,
             ..default()
         });
         let camera = app
             .world_mut()
-            .spawn((
-                Camera2d,
-                Transform::default(),
-                Projection::Orthographic(OrthographicProjection::default_2d()),
-            ))
+            .spawn((Camera3d::default(), Transform::default()))
             .id();
-        app.world_mut().run_system_once(follow_band).unwrap();
-        let before = app.world().get::<Transform>(camera).unwrap().translation;
-        let next = {
-            let mut game = app.world_mut().resource_mut::<Game>();
-            let cell = game.world.tribes[0].cell;
-            let next = game.world.config.neighbors(cell).next().unwrap();
-            game.world.tribes[0].cell = next;
-            game.world.tribes.reverse();
-            next
-        };
-        app.world_mut().run_system_once(follow_band).unwrap();
-        assert_eq!(app.world().resource::<ViewState>().selected, Some(next));
-        assert_ne!(
-            app.world().get::<Transform>(camera).unwrap().translation,
-            before
-        );
-        if let Some(mut projection) = app.world_mut().get_mut::<Projection>(camera)
-            && let Projection::Orthographic(p) = &mut *projection
-        {
-            p.scale = 2.;
+        for direction in [Vec3::Y, Vec3::NEG_Y, Vec3::NEG_Z, Vec3::Z] {
+            let cell = {
+                let mut game = app.world_mut().resource_mut::<Game>();
+                let cell = game.world.grid.nearest(direction);
+                game.world
+                    .tribes
+                    .iter_mut()
+                    .find(|t| t.id == id)
+                    .unwrap()
+                    .cell = cell;
+                game.world.tribes.reverse();
+                cell
+            };
+            app.world_mut().run_system_once(orbit_camera).unwrap();
+            let actual = app.world().get::<Transform>(camera).unwrap();
+            let expected = app.world().resource::<Game>().world.grid.direction(cell);
+            assert!(actual.translation.normalize().distance(expected) < 1e-5);
+            assert!(actual.rotation.is_finite());
+            assert_eq!(app.world().resource::<ViewState>().selected, Some(cell));
         }
-        app.world_mut().run_system_once(follow_band).unwrap();
-        let game = app.world().resource::<Game>();
-        let p = position(next, &game.world.config);
-        let actual = app.world().get::<Transform>(camera).unwrap().translation;
-        assert!(
-            (actual.x - (p.x + 350.).rem_euclid(game.world.config.width as f32 * HEX_WIDTH)).abs()
-                < 0.001
-        );
-        assert!((actual.y - (p.y + 38.)).abs() < 0.001);
         app.world_mut()
             .resource_mut::<Game>()
             .world
             .tribes
             .retain(|t| t.id != id);
-        app.world_mut().run_system_once(follow_band).unwrap();
+        app.world_mut().run_system_once(orbit_camera).unwrap();
         assert_eq!(app.world().resource::<ViewState>().following, None);
-    }
-    #[test]
-    fn hex_picking_round_trips_and_wraps() {
-        let c = PlanetConfig {
-            width: 24,
-            height: 16,
-            cell_km: 20.,
-            temperature: 28.,
-            season_days: 30,
-            axial_tilt: 23.4,
-            ocean_fraction: 0.6,
-            rainfall: 1.,
-            population: 100,
-            seed: 1,
-        };
-        for id in 0..c.len() as u32 {
-            let p = position(id, &c);
-            assert_eq!(cell_at(p, &c), Some(id));
-            assert_eq!(
-                cell_at(p + Vec2::X * c.width as f32 * HEX_WIDTH, &c),
-                Some(id)
-            );
-        }
-        assert_eq!(cell_at(Vec2::new(0., 100.), &c), None);
     }
 }

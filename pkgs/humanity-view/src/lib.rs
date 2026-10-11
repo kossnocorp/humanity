@@ -10,8 +10,9 @@ use humanity_core::{CellId, World};
 use humanity_sim::Simulation;
 use std::path::PathBuf;
 
-pub const RADIUS: f32 = 16.;
-pub const HEX_WIDTH: f32 = RADIUS * 1.732_050_8;
+/// Render units are independent of physical planet kilometers.
+pub const PLANET_RADIUS: f32 = 100.;
+pub const CAMERA_FOV: f32 = 0.8;
 
 #[derive(Resource)]
 struct Game {
@@ -67,6 +68,8 @@ struct ViewState {
     following: Option<u32>,
     capture_exit: Option<AppExit>,
     snapshot_revision: u64,
+    orbit: Quat,
+    distance: f32,
 }
 
 pub fn run(
@@ -75,6 +78,7 @@ pub fn run(
     paused: bool,
     screenshot: Option<PathBuf>,
     insights_open: bool,
+    following: Option<u32>,
 ) -> bool {
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.035, 0.06, 0.085)))
@@ -102,9 +106,11 @@ pub fn run(
             screenshot,
             frames: 0,
             insights_open,
-            following: None,
+            following,
             capture_exit: None,
             snapshot_revision: 0,
+            orbit: Quat::IDENTITY,
+            distance: PLANET_RADIUS * 3.2,
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -120,7 +126,7 @@ pub fn run(
             (
                 input::controls,
                 tick,
-                map::follow_band,
+                map::orbit_camera,
                 map::redraw,
                 ui::update,
                 insights::update,
@@ -210,8 +216,7 @@ mod tests {
         use bevy::input::{keyboard::KeyboardInput, mouse::MouseWheel};
         use bevy::window::PrimaryWindow;
         let world = humanity_world::generate(humanity_core::PlanetConfig {
-            width: 24,
-            height: 16,
+            resolution: 6,
             cell_km: 20.,
             temperature: 28.,
             season_days: 30,
@@ -239,9 +244,9 @@ mod tests {
         .add_message::<MouseWheel>();
         app.world_mut().spawn((Window::default(), PrimaryWindow));
         app.world_mut().spawn((
-            Camera2d,
+            Camera3d::default(),
             Transform::default(),
-            Projection::Orthographic(OrthographicProjection::default_2d()),
+            Projection::Perspective(PerspectiveProjection::default()),
         ));
         app.world_mut()
             .resource_mut::<Time>()

@@ -53,6 +53,7 @@ impl Simulation {
 
     fn move_tribes(&self, world: &mut World) {
         let mut events = Vec::new();
+        let radius = world.config.radius_km();
         for tribe in &mut world.tribes {
             let here = tribe.cell;
             let n = tribe.headcount().max(1) as f32;
@@ -80,21 +81,27 @@ impl Simulation {
                     * (0.4 + tribe.health * 0.6)
                     * (1. - world.cells[here as usize].weather.snow * 0.6))
                 .min(world.config.cell_km * 2.);
-            if tribe.travel < world.config.cell_km {
+            if tribe.travel < world.config.cell_km * 0.5 {
                 continue;
             }
             let mut best = here;
+            let mut best_cost = 0.;
             let mut best_score = score(here) + 2.;
-            for next in world.config.neighbors(here) {
+            for next in world.grid.neighbors(here) {
+                let cost = world.grid.angular_distance(here, next) * radius;
+                if cost > tribe.travel {
+                    continue;
+                }
                 let s = score(next) + world.rng.unit() * 1.5;
                 if s > best_score {
                     best = next;
                     best_score = s;
+                    best_cost = cost;
                 }
             }
             if best != here {
                 tribe.cell = best;
-                tribe.travel -= world.config.cell_km;
+                tribe.travel -= best_cost;
                 world.totals.migrations += 1;
                 events.push(Event {
                     day: world.day,
@@ -141,7 +148,7 @@ impl Simulation {
                     .map(|&(_, i)| i)
                     .find(|&i| world.herds[i].animals > 0);
                 if target.is_none() && world.config.cell_km <= 30. {
-                    for neighbor in world.config.neighbors(t.cell) {
+                    for neighbor in world.grid.neighbors(t.cell) {
                         target = self
                             .herds
                             .at(neighbor)
@@ -222,7 +229,7 @@ impl Simulation {
             }
             let cell = world.tribes[a].cell;
             // Bounded samples from local buckets; dense populations don't become quadratic.
-            let positions = std::iter::once(cell).chain(world.config.neighbors(cell));
+            let positions = std::iter::once(cell).chain(world.grid.neighbors(cell));
             let mut partners = [usize::MAX; 7];
             for (slot, pos) in positions.enumerate() {
                 let bucket = self.tribes.at(pos);
@@ -347,6 +354,7 @@ fn learn(languages: &mut Vec<Language>, family: u32) {
 }
 
 fn migrate_herds(world: &mut World) {
+    let radius = world.config.radius_km();
     for h in &mut world.herds {
         if h.animals == 0 {
             continue;
@@ -368,19 +376,25 @@ fn migrate_herds(world: &mut World) {
         let here = h.cell;
         h.travel = (h.travel + 18. * (1. - world.cells[here as usize].weather.snow * 0.5))
             .min(world.config.cell_km * 2.);
-        if h.travel >= world.config.cell_km {
+        if h.travel >= world.config.cell_km * 0.5 {
             let mut best = here;
+            let mut best_cost = 0.;
             let mut best_score = score(here) + 3.;
-            for next in world.config.neighbors(here) {
+            for next in world.grid.neighbors(here) {
+                let cost = world.grid.angular_distance(here, next) * radius;
+                if cost > h.travel {
+                    continue;
+                }
                 let s = score(next) + world.rng.unit() * 3.;
                 if s > best_score {
                     best = next;
                     best_score = s;
+                    best_cost = cost;
                 }
             }
             if best != here {
                 h.cell = best;
-                h.travel -= world.config.cell_km;
+                h.travel -= best_cost;
             }
         }
         let c = &mut world.cells[h.cell as usize];
@@ -502,8 +516,7 @@ mod tests {
     use super::*;
     fn world() -> World {
         humanity_world::generate(PlanetConfig {
-            width: 48,
-            height: 32,
+            resolution: 12,
             cell_km: 20.,
             temperature: 28.,
             season_days: 30,

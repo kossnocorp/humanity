@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+humanity-grid = { path = "pkgs/humanity-grid" }
 humanity-core = { path = "pkgs/humanity-core" }
 humanity-world = { path = "pkgs/humanity-world" }
 humanity-sim = { path = "pkgs/humanity-sim" }
@@ -19,6 +20,7 @@ anyhow = "1"
 
 [profile.dev]
 opt-level = 1
+debug = 1
 
 [profile.dev.package."*"]
 opt-level = 3
