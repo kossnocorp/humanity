@@ -91,6 +91,7 @@ pub fn controls(
         wheel.clear();
         return;
     }
+    navigation::keyboard(&keys, &game.world, &mut view);
     let size = Vec2::new(window.width(), window.height());
     if keys.just_pressed(KeyCode::Home) {
         view.following = None;
@@ -117,7 +118,7 @@ pub fn controls(
         f32::from(keys.pressed(KeyCode::ArrowRight)) - f32::from(keys.pressed(KeyCode::ArrowLeft)),
         f32::from(keys.pressed(KeyCode::ArrowUp)) - f32::from(keys.pressed(KeyCode::ArrowDown)),
     );
-    if direction != Vec2::ZERO {
+    if direction != Vec2::ZERO && !keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]) {
         view.following = None;
         let speed =
             ((view.distance - PLANET_RADIUS) / PLANET_RADIUS).clamp(0.025, 1.5) * time.delta_secs();
@@ -128,7 +129,12 @@ pub fn controls(
         view.dirty = true;
     }
     let cursor = window.cursor_position();
-    let on_map = cursor.is_some_and(|p| p.y > 92. && p.y < size.y - 54. && p.x < size.x - 350.);
+    let on_map = cursor.is_some_and(|p| {
+        p.y > 92.
+            && p.y < size.y - 54.
+            && p.x < size.x - 350.
+            && !navigation::blocks_map(&view, p, size.y)
+    });
     for e in wheel.read() {
         if !on_map {
             continue;

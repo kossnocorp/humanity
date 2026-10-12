@@ -3,6 +3,7 @@ mod assets;
 mod input;
 mod insights;
 mod map;
+mod navigation;
 mod ui;
 
 use bevy::prelude::*;
@@ -76,6 +77,7 @@ struct ViewState {
     snapshot_revision: u64,
     orbit: Quat,
     distance: f32,
+    navigation: navigation::Navigator,
 }
 
 pub fn run(
@@ -117,6 +119,7 @@ pub fn run(
             snapshot_revision: 0,
             orbit: Quat::IDENTITY,
             distance: PLANET_RADIUS * 3.2,
+            navigation: navigation::Navigator::default(),
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -130,12 +133,14 @@ pub fn run(
         .add_systems(
             Update,
             (
+                navigation::interact,
                 input::controls,
                 tick,
                 map::orbit_camera,
                 map::redraw,
                 ui::update,
                 ui::scroll,
+                navigation::update,
                 insights::update,
                 insights::scroll,
                 capture_frame,
@@ -305,5 +310,22 @@ mod tests {
         app.world_mut().run_system_once(input::controls).unwrap();
         assert!(!app.world().resource::<ViewState>().insights_open);
         assert!(!app.world().resource::<ViewState>().paused);
+        // Menu navigation must not rotate the globe or release band following.
+        let band = app.world().resource::<Game>().world.tribes[0].id;
+        {
+            let mut view = app.world_mut().resource_mut::<ViewState>();
+            view.following = Some(band);
+            view.orbit = Quat::IDENTITY;
+            view.distance = PLANET_RADIUS * 3.;
+        }
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(KeyCode::AltLeft);
+            keys.press(KeyCode::ArrowRight);
+        }
+        app.world_mut().run_system_once(input::controls).unwrap();
+        assert_eq!(app.world().resource::<ViewState>().following, Some(band));
+        assert_eq!(app.world().resource::<ViewState>().orbit, Quat::IDENTITY);
     }
 }

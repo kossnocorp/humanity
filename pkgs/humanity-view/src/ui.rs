@@ -99,7 +99,7 @@ pub fn setup(mut commands: Commands) {
     commands.spawn((Node { position_type: PositionType::Absolute, bottom: px(0), width: percent(100), height: px(50),
         padding: UiRect::axes(px(24), px(16)), ..default() }, BackgroundColor(Color::srgba(0.035, 0.065, 0.085, 0.98))))
         .with_children(|p| {
-            p.spawn((Text::new("SPACE pause   - / + speed   ARROWS / DRAG rotate   WHEEL zoom   CLICK inspect   S save   L load   TAB layer   F follow   HOME globe   ? population"),
+            p.spawn((Text::new("SPACE pause   - / + speed   ARROWS rotate   WHEEL zoom   S/L save/load   TAB layer   F follow   B browser   ALT+ARROWS menu   ENTER open   ? population"),
                 TextFont { font_size: 13., ..default() }, TextColor(MUTED)));
         });
 }

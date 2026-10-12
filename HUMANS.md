@@ -34,10 +34,26 @@ With mise installed, `mise run play`, `mise run simulate`, and `mise run check` 
 | Wheel over field notes | Scroll resources, wildlife, band knowledge and equipment |
 | F | Follow the next human band as it moves; arrows/drag/click/Home release it |
 | Esc | Unfollow and clear the active selection; also close population insights |
+| B | Show/hide the entity browser (left sidebar) |
+| Alt+Up/Down | Select the previous/next browser entry |
+| Alt+Left/Right | Switch Bands / Camps / Cultures / Languages |
+| Enter | Open selected group/camp, or navigate to and follow a band |
+| Backspace | Return from a filtered band list to its parent category |
+| PageUp/PageDown / wheel over browser | Page through entries / move the selection |
 | Home | Return to whole-globe distance |
 | `?` (Shift+/ on US keyboards) | Open/close live population insights; Esc also closes |
 
 ### Population insights
+
+The left browser lists active bands, remembered camps, living cultures and language
+families. Click a band to center and follow it. Click a camp to center its cell and
+list resident bands plus its founder (if alive elsewhere); then choose a band to
+follow. Culture/language entries open their member-band lists. Language populations
+are **share-weighted estimates**, since bands store language mixtures rather than
+individual speakers. Legacy seasonal records for the same culture/cell/kind appear
+as one browser entry listing their recorded seasons. The list is paginated and
+refreshes during simulation; Space and -/+ continue controlling time. Alt+arrows
+operate the browser without rotating the globe.
 
 The `?` screen charts population, births/deaths, lifetime death causes, and current age cohorts. It also shows how many people have low health or little food and lists recent death groups with their band's food, health, temperature and snow context. Scroll for details on smaller windows. **Time keeps flowing; Space and -/+ work in the chart view.** You can also launch with `--insights`.
 
