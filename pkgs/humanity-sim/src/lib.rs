@@ -63,7 +63,7 @@ impl Simulation {
         let mut founded_sites = std::collections::BTreeMap::<u32, Vec<_>>::new();
         for site in &world.sites {
             if site.kind == SiteKind::FishingSettlement
-                || site.season == world.local_season(site.cell)
+                || site.known_seasons & (1 << world.local_season(site.cell)) != 0
             {
                 cultural_sites[site.culture as usize].push(site);
                 founded_sites
@@ -123,12 +123,13 @@ impl Simulation {
                             - world.grid.angular_distance(id, site.cell))
                             * radius
                             / world.config.cell_km;
-                        progress * SOCIAL.seasonal_return_score
-                            + if site.cell == id {
-                                SOCIAL.site_loyalty_score
-                            } else {
-                                0.
-                            }
+                        site.condition
+                            * (progress * SOCIAL.seasonal_return_score
+                                + if site.cell == id {
+                                    SOCIAL.site_loyalty_score
+                                } else {
+                                    0.
+                                })
                     })
                 } else {
                     0.

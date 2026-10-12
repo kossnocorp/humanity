@@ -94,8 +94,8 @@ pub enum Residence {
     /// Can establish a fishing settlement after sustained, adequately provisioned
     /// residence with fishing knowledge and nearby aquatic stocks; eligible all year.
     Fishing,
-    /// Can establish a camp recording the current local season. Its return attraction
-    /// applies in that season, with southern seasons shifted by half a year.
+    /// Can establish a residential place that learns multiple seasons of use.
+    /// Return attraction applies in known seasons; southern seasons shift by half a year.
     Seasonal,
 }
 
@@ -116,7 +116,7 @@ pub struct VariantRules {
     pub waterside_weight: u32,
     /// Minimum initial adult fishing proficiency (0–1) for newly generated bands.
     /// Raising it seeds associated child/elder proficiency too; later identity changes
-    /// and save upgrades do not grant this knowledge automatically.
+    /// do not grant this knowledge automatically.
     pub fishing_floor: f32,
     /// Minimum initial adult preservation proficiency (0–1), applied like `fishing_floor`.
     /// Preservation affects food spoilage/storage and eligibility for larger river camps.
@@ -248,8 +248,8 @@ pub struct SocialRules {
     /// Unlike the rich-camp check, this founding check uses stocks without a snow discount.
     pub fishing_site_aquatic_days: f32,
     /// Maximum remembered sites per owning culture before further founding is blocked.
-    /// Existing sites persist while their founder band or owning culture survives,
-    /// including while unoccupied; lowering this value does not delete existing sites.
+    /// Sites also need a living founder/owning culture and sufficient condition.
+    /// Lowering this value does not delete existing sites; abandonment frees slots.
     pub max_sites_per_culture: usize,
     /// Additive movement-score bonus for the cell of the nearest eligible remembered
     /// site. Applies only with adequate food/health; both cultural and founder sites qualify.
@@ -258,6 +258,20 @@ pub struct SocialRules {
     /// eligible site. Applies to year-round fishing sites and in-season seasonal camps,
     /// only with adequate food/health; normal travel costs and route constraints still apply.
     pub seasonal_return_score: f32,
+    /// Unmaintained residential places lose one full condition unit over this many
+    /// simulated years. Multi-year grace permits skipped seasonal rounds.
+    pub residential_site_decay_years: f32,
+    /// Equivalent decay horizon for fishing locations, whose place knowledge lasts longer.
+    pub fishing_site_decay_years: f32,
+    /// Condition restored per occupied day when an associated band has adequate
+    /// provisions and health. Represents routine upkeep; no buildings are simulated.
+    pub site_maintenance_repair: f32,
+    /// Remove sites at or below this condition, reclaiming their culture's site slots.
+    pub site_abandon_condition: f32,
+    /// Occupied days required to learn an additional seasonal association and to
+    /// treat a season as meaningful in the recent-use description. Capped at one
+    /// season's length for worlds using shorter seasons.
+    pub site_season_use_days: u32,
 }
 pub const SOCIAL: SocialRules = SocialRules {
     rich_camp_limit: 150,
@@ -283,4 +297,9 @@ pub const SOCIAL: SocialRules = SocialRules {
     max_sites_per_culture: 12,
     site_loyalty_score: 4.,
     seasonal_return_score: 8.,
+    residential_site_decay_years: 3.,
+    fishing_site_decay_years: 6.,
+    site_maintenance_repair: 0.025,
+    site_abandon_condition: 0.02,
+    site_season_use_days: 10,
 };

@@ -42,16 +42,32 @@ Weights are relative within inland or waterside environments. Initial culture id
 
 Fishing residents and seasonal-round bands establish a location after **20 consecutive residence days**, with at least 3 food-days/person. Fishing settlements additionally require fishing ≥.30 and accessible aquatic biomass ≥10 food-days/person. They are reusable residence/procurement locations, not simulated buildings or farming towns.
 
-Sites remember cell, owning culture, founding band, founding/last-visit dates, and (for seasonal camps) local season. Southern seasons are shifted by half a year. Cultures remember at most 12 sites; fishing sites are year-round, seasonal sites attract return during their recorded season. Secure bands favor their nearest eligible cultural site (return score 8, on-site loyalty 4); shortage or poor health overrides that attachment. Every journey still pays spherical travel costs and obeys land/boat routing.
+There is **one place per culture/cell**, independently of season and function. Sites record local-season associations, current and longest continuous stay, distinct occupation episodes, total occupied days, present associated people, and up to eight recent seasons of occupied days/person-days. Southern seasons are shifted by half a year. A new seasonal association is learned after 10 occupied days in that season (capped at season length); the founding season is known initially.
 
-A marker remains while **either its founding band or its owning culture has living members**, even when unoccupied. It disappears when both are extinct. Extinct culture records stay in the ancestry archive. Sites do not create food, reserve stocks, exclude outsiders, merge resident bands, or require residents to remain through famine.
+Function (fishing location / residential camp) is distinct from observed use. A two-season uninterrupted occupation is described as a long-stay base; a full uninterrupted year as observed year-round residence. Otherwise recent occupied days distinguish occasional, seasonal and multi-season use. Four known season associations alone do not establish permanence. These are transparent display criteria, not universal archaeological boundaries or new settlement technology.
+
+Cultures remember at most 12 places. Fishing sites attract return all year; residential sites during known seasons. Secure bands favor their nearest eligible cultural or founder site (return score 8, on-site loyalty 4), multiplied by **condition**; shortage or poor health overrides attachment. Every journey pays normal spherical travel costs and obeys routing constraints.
+
+### Decay and maintenance (`SOCIAL`)
+
+| Parameter | Default | Effect |
+|---|---:|---|
+| `residential_site_decay_years` | 3 | Years to lose one condition unit without maintenance |
+| `fishing_site_decay_years` | 6 | Slower loss for fishing places |
+| `site_maintenance_repair` | .025 | Condition repaired per maintained day, after daily decay |
+| `site_abandon_condition` | .02 | Remove place at/below this condition |
+| `site_season_use_days` | 10 | Meaningful seasonal use / learning threshold |
+
+Associated residents are owning-culture bands and the founder even if it changes culture; a founder is never double-counted. At least one associated band needs health ≥.65 and food ≥3 days/person to maintain the camp. Upkeep represents routine clearing/repair and maintained knowledge, without an extra materials debit or building system. Unsupported visits still record real occupancy but do not reset decay. Normal annual absences leave time for return and repair; long neglect removes the marker even with living owners. Total loss of founder and owning culture also removes it immediately. Removal emits `SiteAbandoned`, frees a site slot, and re-founding allocates a fresh ID/history. Extinct culture records stay in the ancestry archive.
+
+These decay rates are modelling assumptions. A disappearing marker represents a forgotten/unusable active camp, not eradication of all archaeological traces. Sites do not create food, reserve stocks, exclude outsiders or merge bands.
 
 ## Inspect / tune / run
 
 1. Edit the typed tables and `SOCIAL` constant in `src/lib.rs`; rebuild with normal Cargo commands. Keep thresholds ≥2, departure fractions between 0 and 1, durations positive, and at least one nonzero seeding weight in each environment.
 2. Generation weights and initial proficiency floors affect **new worlds**; existing identities and band customs remain persisted. Runtime thresholds and social rates affect resumed worlds too. Changing rules intentionally changes future trajectories.
-3. `cargo run -p humanity-cli --no-default-features -- --inspect saves/residential-3600.json` lists **actual living cultures**, variants, parents, population/bands, remembered locations and size statistics. JSON saves include the complete extinct-identity archive as `cultures`.
-4. In the viewer, click a cell and scroll field notes for culture/custom/pressure and location details. Cyan house markers are fishing settlements; violet tents are seasonal locations.
+3. `cargo run -p humanity-cli --no-default-features -- --inspect saves/camps-10800.json` lists **actual living cultures**, variants, parents, population/bands, remembered locations and size statistics. JSON saves include the complete extinct-identity archive as `cultures`. The camp rework uses v5 saves; older saves require a new world, with no compatibility path.
+4. In the viewer, click a cell and scroll field notes for culture/custom/pressure, condition and season-by-season occupation details. Cyan houses mark fishing locations; violet tents mark residential camps. The browser shows their observed occupation pattern independently of function.
 
 Implementation consumers: `humanity-world` seeds cultures; `humanity-sim/src/social.rs` handles fission, divergence, mixing and location lifetime; movement is in `humanity-sim/src/lib.rs`; persisted records are in `humanity-core`. Practical-skill learning remains in `humanity-sim/src/subsistence.rs`; this crate currently centralizes residential/social rules, not every ecological or demographic rate.
 

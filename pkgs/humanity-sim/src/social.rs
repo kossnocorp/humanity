@@ -149,7 +149,7 @@ fn sites(world: &mut World) {
         .tribes
         .iter()
         .filter(|t| t.headcount() > 0)
-        .map(|t| (t.id, t.cell))
+        .map(|t| (t.id, t))
         .collect();
     let live_cultures: BTreeSet<_> = world
         .tribes
@@ -157,25 +157,64 @@ fn sites(world: &mut World) {
         .filter(|t| t.headcount() > 0)
         .map(|t| t.culture)
         .collect();
-    world
-        .sites
-        .retain(|s| live_bands.contains_key(&s.founder_band) || live_cultures.contains(&s.culture));
-    let occupied: BTreeSet<_> = world
-        .tribes
-        .iter()
-        .filter(|t| t.headcount() > 0)
-        .map(|t| (t.culture, t.cell))
-        .collect();
+    let maintained = |t: &Tribe| {
+        t.health >= SOCIAL.scarce_health && t.food >= t.headcount() as f32 * SOCIAL.site_food_days
+    };
+    let mut occupied = BTreeMap::<(u32, CellId), (u64, bool)>::new();
+    for t in live_bands.values() {
+        let entry = occupied.entry((t.culture, t.cell)).or_default();
+        entry.0 += u64::from(t.headcount());
+        entry.1 |= maintained(t);
+    }
+    let season_days = world.config.season_days;
+    let mut abandoned = Vec::new();
+    for s in &mut world.sites {
+        let (mut people, mut upkeep) = occupied
+            .get(&(s.culture, s.cell))
+            .copied()
+            .unwrap_or_default();
+        if let Some(founder) = live_bands.get(&s.founder_band)
+            && founder.cell == s.cell
+            && founder.culture != s.culture
+        {
+            people += u64::from(founder.headcount());
+            upkeep |= maintained(founder);
+        }
+        let season = ((world.day / u64::from(season_days)
+            + if world.grid.latitude(s.cell) < 0. {
+                2
+            } else {
+                0
+            })
+            % 4) as u32;
+        s.observe(world.day, season_days, season, people, upkeep);
+        if s.condition <= SOCIAL.site_abandon_condition
+            || (!live_bands.contains_key(&s.founder_band) && !live_cultures.contains(&s.culture))
+        {
+            abandoned.push(Event {
+                day: world.day,
+                kind: EventKind::SiteAbandoned,
+                cell: s.cell,
+                tribe: s.founder_band,
+                other: None,
+                amount: s.culture,
+                probability: 1.,
+            });
+        }
+    }
+    world.sites.retain(|s| {
+        s.condition > SOCIAL.site_abandon_condition
+            && (live_bands.contains_key(&s.founder_band) || live_cultures.contains(&s.culture))
+    });
+    for event in abandoned {
+        world.totals.sites_abandoned += 1;
+        world.event(event);
+    }
     let mut counts = vec![0; world.cultures.len()];
     let mut locations = BTreeMap::new();
-    for (i, s) in world.sites.iter_mut().enumerate() {
-        if occupied.contains(&(s.culture, s.cell))
-            || live_bands.get(&s.founder_band) == Some(&s.cell)
-        {
-            s.last_visited = world.day;
-        }
+    for (i, s) in world.sites.iter().enumerate() {
         counts[s.culture as usize] += 1;
-        locations.insert((s.culture, s.cell, s.kind as u8, s.season), i);
+        locations.insert((s.culture, s.cell), i);
     }
     for i in 0..world.tribes.len() {
         let t = &world.tribes[i];
@@ -187,21 +226,16 @@ fn sites(world: &mut World) {
         let kind = match residence {
             Residence::Mobile => continue,
             Residence::Fishing => SiteKind::FishingSettlement,
-            Residence::Seasonal => SiteKind::SeasonalCamp,
+            Residence::Seasonal => SiteKind::ResidentialCamp,
         };
-        let site_season = if kind == SiteKind::SeasonalCamp {
-            season
-        } else {
-            0
-        };
-        let key = (t.culture, t.cell, kind as u8, site_season);
-        if let Some(&index) = locations.get(&key) {
-            world.sites[index].last_visited = world.day;
+        let key = (t.culture, t.cell);
+        if locations.contains_key(&key) {
             continue;
         }
         if counts[t.culture as usize] >= SOCIAL.max_sites_per_culture
             || t.residence_days < SOCIAL.site_founding_days
             || t.food < t.headcount() as f32 * SOCIAL.site_food_days
+            || t.health < SOCIAL.scarce_health
         {
             continue;
         }
@@ -218,25 +252,17 @@ fn sites(world: &mut World) {
                 continue;
             }
         }
-        let site = CulturalSite {
-            id: world.next_site_id,
-            name: format!(
-                "{} {}",
-                if kind == SiteKind::FishingSettlement {
-                    "Fish landing"
-                } else {
-                    "Season camp"
-                },
-                world.next_site_id + 1
-            ),
-            cell: t.cell,
-            culture: t.culture,
-            founder_band: t.id,
+        let mut site = CulturalSite::new(
+            world.next_site_id,
+            t.cell,
+            t.culture,
+            t.id,
             kind,
-            season: site_season,
-            founded: world.day,
-            last_visited: world.day,
-        };
+            world.day,
+            season,
+        );
+        let (people, upkeep) = occupied[&key];
+        site.observe(world.day, season_days, season, people, upkeep);
         let event = Event {
             day: world.day,
             kind: EventKind::SiteFounded,
@@ -256,7 +282,7 @@ fn sites(world: &mut World) {
 }
 
 pub fn fission(world: &mut World) {
-    // Appended daughters are visited too: oversized legacy bands resolve in a
+    // Appended daughters are visited too: oversized bands resolve in a
     // single day, with work proportional to the resulting number of camps.
     let mut index = 0;
     while index < world.tribes.len() {
@@ -556,7 +582,7 @@ mod tests {
             assert_eq!(w.sites.len(), 1);
             let site = w.sites[0].clone();
             if variant == CultureVariant::SeasonalRounds {
-                assert_eq!(site.season, w.local_season(site.cell));
+                assert_eq!(site.known_seasons, 1 << w.local_season(site.cell));
             }
             w.tribes.remove(0);
             w.day += 1;
@@ -593,27 +619,119 @@ mod tests {
         t.food = t.headcount() as f32 * 10.;
         t.health = 1.;
         t.travel = base.config.cell_km * 2.;
-        base.sites.push(CulturalSite {
-            id: 0,
-            name: "Return camp".into(),
-            cell: target,
-            culture: t.culture,
-            founder_band: t.id,
-            kind: SiteKind::SeasonalCamp,
-            season: base.local_season(target),
-            founded: 0,
-            last_visited: 0,
-        });
+        let (culture, founder) = (t.culture, t.id);
+        base.sites.push(CulturalSite::new(
+            0,
+            target,
+            culture,
+            founder,
+            SiteKind::ResidentialCamp,
+            0,
+            base.local_season(target),
+        ));
         let mut active = base.clone();
         crate::Simulation::default().move_tribes(&mut active);
         assert_eq!(active.tribes[0].cell, target);
         assert!(active.tribes[0].travel < base.tribes[0].travel);
         let mut inactive = base.clone();
-        inactive.sites[0].season = (inactive.sites[0].season + 1) % 4;
+        inactive.sites[0].known_seasons = 1 << ((inactive.local_season(target) + 1) % 4);
         crate::Simulation::default().move_tribes(&mut inactive);
         assert_eq!(inactive.tribes[0].cell, here);
         base.tribes[0].food = 0.;
         crate::Simulation::default().move_tribes(&mut base);
         assert_eq!(base.tribes[0].cell, here);
+    }
+
+    #[test]
+    fn one_place_tracks_multiple_seasons_absence_maintenance_and_eventual_decay() {
+        let mut w = world();
+        w.tribes.truncate(1);
+        w.tribes[0].culture = 0;
+        w.cultures[0].variant = CultureVariant::SeasonalRounds;
+        let home = w.tribes[0].cell;
+        let n = w.tribes[0].headcount();
+        w.tribes[0].food = n as f32 * 10.;
+        w.tribes[0].residence_days = SOCIAL.site_founding_days;
+        let year = w.config.year_days();
+        for day in 1..=year * 3 {
+            w.day = u64::from(day);
+            sites(&mut w);
+        }
+        assert_eq!(
+            w.sites.len(),
+            1,
+            "season changes must not create duplicate places"
+        );
+        assert_eq!(w.totals.sites_founded, 1);
+        let site = &w.sites[0];
+        let id = site.id;
+        assert_eq!(site.known_seasons, 15);
+        assert_eq!(site.occupation.episodes, 1);
+        assert_eq!(site.occupation.occupied_days, u64::from(year * 3));
+        assert_eq!(site.occupation.continuous_days, year * 3);
+        assert_eq!(site.occupation.seasons.len(), 8);
+        assert_eq!(
+            site.pattern(w.config.season_days),
+            "Year-round residence (observed)"
+        );
+        assert_eq!(site.condition, 1.);
+        for s in &site.occupation.seasons {
+            assert_eq!(s.person_days, u64::from(s.occupied_days) * u64::from(n));
+        }
+        let away = w
+            .cells
+            .iter()
+            .enumerate()
+            .find(|(i, c)| *i != home as usize && !c.biome.water())
+            .unwrap()
+            .0 as u32;
+        w.tribes[0].cell = away;
+        w.tribes[0].residence_days = 0;
+        for _ in 0..year {
+            w.day += 1;
+            sites(&mut w);
+        }
+        assert_eq!(
+            w.sites.len(),
+            1,
+            "a skipped annual round must remain possible"
+        );
+        let faded = w.sites[0].condition;
+        assert!(faded < 0.8 && faded > 0.5);
+        assert_eq!(w.sites[0].occupation.continuous_days, 0);
+        assert_eq!(w.sites[0].occupation.present_people, 0);
+        assert_ne!(
+            w.sites[0].pattern(w.config.season_days),
+            "Year-round residence (observed)"
+        );
+        w.tribes[0].cell = home;
+        w.day += 1;
+        sites(&mut w);
+        assert!(w.sites[0].condition > faded);
+        assert_eq!(w.sites[0].id, id);
+        assert_eq!(w.sites[0].occupation.episodes, 2);
+        assert_eq!(w.sites[0].occupation.continuous_days, 1);
+        assert_eq!(w.sites[0].last_maintained, Some(w.day));
+        w.tribes[0].cell = away;
+        for _ in 0..year * 4 {
+            w.day += 1;
+            sites(&mut w);
+        }
+        assert!(
+            w.sites.is_empty(),
+            "living owners must not prevent neglect-driven decay"
+        );
+        assert_eq!(w.totals.sites_abandoned, 1);
+        assert!(w.events.iter().any(|e| e.kind == EventKind::SiteAbandoned));
+        w.tribes[0].cell = home;
+        w.tribes[0].residence_days = SOCIAL.site_founding_days;
+        w.day += 1;
+        sites(&mut w);
+        assert_eq!(w.sites.len(), 1);
+        assert!(
+            w.sites[0].id > id,
+            "forgotten places get fresh IDs if re-established"
+        );
+        assert_eq!(w.sites[0].occupation.episodes, 1);
     }
 }

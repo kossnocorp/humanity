@@ -2,11 +2,13 @@
 use serde::{Deserialize, Serialize};
 mod culture;
 mod insights;
+mod sites;
 pub use culture::*;
 pub use insights::*;
+pub use sites::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 4;
+pub const SAVE_VERSION: u32 = 5;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -331,6 +333,7 @@ pub enum EventKind {
     CultureDivergence,
     CultureMixing,
     SiteFounded,
+    SiteAbandoned,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -370,6 +373,8 @@ pub struct Totals {
     pub culture_mixtures: u64,
     #[serde(default)]
     pub sites_founded: u64,
+    #[serde(default)]
+    pub sites_abandoned: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

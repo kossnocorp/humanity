@@ -116,7 +116,7 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
     };
     update_environment(&mut world, true);
     populate(&mut world)?;
-    initialize_cultures(&mut world, true);
+    initialize_cultures(&mut world);
     world.record_population();
     Ok(world)
 }
@@ -354,7 +354,7 @@ fn populate(world: &mut World) -> Result<(), String> {
 }
 
 /// Ecology biases customs but does not determine them. Isolated RNG also makes
-/// old-save initialization independent of the gameplay random stream.
+/// variant selection independent of the gameplay random stream.
 pub fn initial_camp_tradition(world: &World, cell: CellId, band: u32) -> CampTradition {
     initial_culture_variant(world, cell, band).rules().camp
 }
@@ -386,8 +386,7 @@ pub fn initial_culture_variant(world: &World, cell: CellId, band: u32) -> Cultur
 }
 
 /// Initial identities span multiple camps with a shared language and strategy.
-/// Upgrades preserve existing knowledge and the gameplay RNG.
-pub fn initialize_cultures(world: &mut World, seed_knowledge: bool) {
+fn initialize_cultures(world: &mut World) {
     let mut groups = std::collections::BTreeMap::new();
     for i in 0..world.tribes.len() {
         let t = &world.tribes[i];
@@ -414,20 +413,18 @@ pub fn initialize_cultures(world: &mut World, seed_knowledge: bool) {
         t.culture = id;
         t.camp_tradition = variant.rules().camp;
         t.last_cultural_contact = world.day;
-        if seed_knowledge {
-            for (skill, floor) in [
-                (Skill::Fishing, variant.rules().fishing_floor),
-                (Skill::Preservation, variant.rules().preservation_floor),
-            ] {
-                if t.knowledge.level(skill) < floor {
-                    t.knowledge.seed(skill, floor);
-                }
+        for (skill, floor) in [
+            (Skill::Fishing, variant.rules().fishing_floor),
+            (Skill::Preservation, variant.rules().preservation_floor),
+        ] {
+            if t.knowledge.level(skill) < floor {
+                t.knowledge.seed(skill, floor);
             }
         }
     }
 }
 
-/// Also used for v2 upgrades; a separate seed avoids changing gameplay RNG.
+/// A separate seed keeps knowledge seeding independent of the gameplay RNG.
 pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
     let c = &world.cells[cell as usize];
     let water = c.river > 0.
@@ -526,19 +523,6 @@ pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
         } else {
             (*stock + (target - *stock) * rate).max(0.)
         };
-    }
-}
-
-pub fn upgrade_subsistence(world: &mut World) {
-    let area = (world.config.cell_km / 20.).powi(2);
-    for (id, c) in world.cells.iter_mut().enumerate() {
-        renew_subsistence(c, area * world.grid.area_factor(id as u32), true);
-        c.resources.toolstone = Rng::new(world.config.seed ^ id as u64).unit();
-    }
-    for i in 0..world.tribes.len() {
-        let t = &world.tribes[i];
-        let k = initial_knowledge(world, t.cell, t.id);
-        world.tribes[i].knowledge = k;
     }
 }
 

@@ -77,7 +77,7 @@ pub fn setup(mut commands: Commands) {
             p.spawn((Hud::Notes, Text::default(), TextFont { font_size: 14., ..default() }, TextColor(INK)));
             p.spawn((Text::new("RECENT ENCOUNTERS"), TextFont { font_size: 12., ..default() }, TextColor(GOLD)));
             p.spawn((Hud::Chronicle, Text::default(), TextFont { font_size: 12., ..default() }, TextColor(MUTED)));
-            p.spawn((Text::new("Cream camps: human bands\nCyan houses: fishing settlements\nViolet tents: seasonal locations\nOchre animals: migrating herds\nBlue threads: rivers  /  Pale ground: snow"),
+            p.spawn((Text::new("Cream camps: human bands\nCyan houses: fishing locations\nViolet tents: remembered camps\nOchre animals: migrating herds\nBlue threads: rivers  /  Pale ground: snow"),
                 TextFont { font_size: 11., ..default() }, TextColor(MUTED)));
         });
     commands.spawn((
@@ -177,6 +177,24 @@ pub fn update(
                         h.condition * 100.
                     ));
                 }
+                for s in w.sites.iter().filter(|s| s.cell == id) {
+                    let o = &s.occupation;
+                    body.push_str(&format!("\n\nLOCATION / {}\n{} / culture {}\n{}\nKnown seasons: {}\nCondition {:.0}% / maintained day {}\nFounded {} / last visit {}\n{} associated people present\nCurrent stay {} days / longest {}\n{} occupied days in {} stays\n",
+                        s.name, s.kind.label(), s.culture, s.pattern(w.config.season_days),
+                        s.seasons_label(), s.condition*100., s.last_maintained.map_or("never".into(), |day| day.to_string()),
+                        s.founded, s.last_visited, o.present_people, o.continuous_days, o.longest_stay,
+                        o.occupied_days, o.episodes));
+                    body.push_str("Recent seasons: occupied days / person-days\n");
+                    for season in &o.seasons {
+                        body.push_str(&format!(
+                            "Year {} {}: {} / {}\n",
+                            season.period / 4 + 1,
+                            ["spring", "summer", "autumn", "winter"][season.season as usize],
+                            season.occupied_days,
+                            season.person_days
+                        ));
+                    }
+                }
                 if let Some(t) = people
                     .iter()
                     .find(|t| Some(t.id) == view.following)
@@ -226,24 +244,6 @@ pub fn update(
                 } else {
                     body.push_str("\nNo human band here.\nF follows the next band.");
                 }
-                for s in w.sites.iter().filter(|s| s.cell == id) {
-                    body.push_str(&format!(
-                        "\n\nLOCATION / {}\n{:?} / culture {}\nFounded day {} / visited {}\n{}\n",
-                        s.name,
-                        s.kind,
-                        s.culture,
-                        s.founded,
-                        s.last_visited,
-                        if s.kind == humanity_core::SiteKind::SeasonalCamp {
-                            format!(
-                                "Local season: {}",
-                                ["spring", "summer", "autumn", "winter"][s.season as usize]
-                            )
-                        } else {
-                            "Year-round fishing location".into()
-                        }
-                    ));
-                }
                 body
             } else {
                 "Click a cell on the globe to inspect\nclimate, resources, herds and people.\n\nA closed sphere: 12 pentagons,\nall remaining cells hexagons.\nDrag freely across either pole.\nSeasons reverse across the equator.".into()
@@ -268,6 +268,7 @@ pub fn update(
                             | EventKind::CultureDivergence
                             | EventKind::CultureMixing
                             | EventKind::SiteFounded
+                            | EventKind::SiteAbandoned
                     )
                 })
                 .take(4)
@@ -298,6 +299,7 @@ pub fn update(
                         }
                         EventKind::CultureMixing => format!("joined mixed culture {}", e.amount),
                         EventKind::SiteFounded => "established a remembered location".into(),
+                        EventKind::SiteAbandoned => "camp faded / abandoned".into(),
                         _ => "band lost".into(),
                     };
                     format!("Day {} / Band {} / {}", e.day, e.tribe, action)

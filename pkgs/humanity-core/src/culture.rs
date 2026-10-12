@@ -15,26 +15,6 @@ pub struct Culture {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SiteKind {
-    FishingSettlement,
-    SeasonalCamp,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CulturalSite {
-    pub id: u64,
-    pub name: String,
-    pub cell: crate::CellId,
-    pub culture: u32,
-    pub founder_band: u32,
-    pub kind: SiteKind,
-    /// Local season (southern seasons are shifted by half a year).
-    pub season: u32,
-    pub founded: u64,
-    pub last_visited: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(usize)]
 pub enum Skill {
     Knapping,

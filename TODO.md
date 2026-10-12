@@ -10,7 +10,7 @@
 | Demography | Female/male children, adults and elders; no individual-person entities |
 | Specialists | Hunters, gatherers, healers and guides allocated from adults |
 | Culture | Named shared identity with variant, founding date and up to two parent identities |
-| Cultural site | Remembered fishing settlement or seasonal camp, ownership, founder and visit history |
+| Cultural site | One remembered place per culture/cell: fishing or residential function, multiple seasons of use, occupation history, condition and upkeep |
 | Herd / species | Moving aggregate animal population, condition and travel; six land species |
 | Language mixture | Family shares within a band; overlap affects mutual understanding |
 | Knowledge | Cohort proficiency in 13 practical skills and species-specific hunting familiarity |
@@ -41,7 +41,7 @@
 
 `Hunt`, `HuntFailed`, `Fishing`, `Conflict`, `Exchange`, `KnowledgeExchange`,
 `Migration`, `WaterCrossing`, `Birth`, `Death`, `Extinction`, `Innovation`,
-`BandFission`, `CultureDivergence`, `CultureMixing`, `SiteFounded`.
+`BandFission`, `CultureDivergence`, `CultureMixing`, `SiteFounded`, `SiteAbandoned`.
 
 Events record outcomes; simulation systems execute mechanics. Each event includes day,
 cell, band, optional other participant, amount and probability field. Recent history
@@ -50,14 +50,33 @@ retains 512 events; lifetime totals and population diagnostics are separate.
 ### Code map
 
 - `pkgs/humanity-core/src/lib.rs`: world, cells, bands, demography, herds, events.
-- `pkgs/humanity-core/src/culture.rs`: cultural identities/sites, knowledge/equipment.
+- `pkgs/humanity-core/src/culture.rs`: cultural identities, knowledge/equipment.
+- `pkgs/humanity-core/src/sites.rs`: places, occupation histories and condition.
 - `pkgs/humanity-core/src/insights.rs`: population/mortality records.
 - `pkgs/humanity-sim/src/lib.rs`: daily phases, movement, feeding, contacts, demography.
 - `pkgs/humanity-sim/src/subsistence.rs`: crafting, fishing and practical learning.
 - `pkgs/humanity-sim/src/social.rs`: identity change, camp fission and remembered sites.
 - `pkgs/humanity-world/src/lib.rs`: generation, climate and ecological renewal.
 
-## Seasonal locations: investigation (2026-10-12)
+## Camp rework shipped (2026-10-13)
+
+- One place per culture/cell, with multiple learned local-season associations.
+- Fishing/residential function separate from observed occupation pattern.
+- Current/longest stay, episodes, lifetime occupied days and eight recent seasons of
+  occupied days/person-days; a visit in one season no longer overwrites another's history.
+- Daily decay and upkeep: roughly 3 unmaintained years for residential camps, 6 for
+  fishing locations. Healthy/provisioned associated residents restore condition;
+  unsupported visits do not. Condition scales attachment. Forgotten camps disappear,
+  emit `SiteAbandoned`, free site slots and receive new IDs if later re-founded.
+- Browser/field notes expose condition and observed use. Four seasons of visits
+  alone do not label a place permanent; continuous stays are tracked separately.
+- **Fresh v5 worlds required.** Per user direction, old-save migration/compatibility
+  was removed. The investigation below describes the previous v4 simulation.
+
+Still pending: finer-scale/net-return-based foraging and movement calibration,
+shared physical places across cultures, and classification hysteresis if needed.
+
+## Seasonal locations: investigation (2026-10-12, pre-rework)
 
 Examined `saves/world.json` at **day 81,625**, year 227, 90 days/season,
 20 km mean cell spacing. Source SHA-256:
@@ -116,20 +135,19 @@ resolution, not evidence of individual households occupying one exact campsite.
    a substantial territory. Current state has no sub-cell camp positions or
    residential-versus-logistical foraging distinction.
 
-### Recommended refactor (pending)
+### Refactor checklist
 
-- [ ] Give a remembered place one stable identity; represent multiple seasons of
+- [x] Give a remembered place one stable identity; represent multiple seasons of
   use on that place instead of creating a place per season. Initially deduplicate
   per culture/cell; consider shared physical places with separate cultural associations
   so ancestral ownership and founder access remain explicit.
-- [ ] Separate **function** (residential base, fishing location, resource/task camp)
+- [x] Separate **function** (residential/fishing place; dedicated task camps remain future work)
   from **observed occupation pattern** (seasonal, multi-season, near-year-round).
   Culture should bias mobility, not permanently dictate a site's classification.
-- [ ] Track season-specific occupied days, distinct occupation episodes,
+- [x] Track season-specific occupied days, distinct occupation episodes,
   consecutive occupancy, absences, residents and recent person-days. Keep historical
   use separate from recent use so centuries of visits do not imply current permanence.
-- [ ] Preserve legacy season flags as recorded associations, but mark historical
-  occupancy unknown: `founded`/`last_visited` cannot reconstruct past residence.
+- [x] Require new saves instead of reconstructing legacy occupancy (user decision).
 - [ ] Base descriptive labels on observed duration/repetition, with minimum evidence
   and hysteresis. Four visited seasons alone must not imply continuous settlement.
 - [ ] Measure and balance expected **net foraging returns**, localized depletion,

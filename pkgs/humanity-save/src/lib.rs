@@ -43,43 +43,13 @@ pub fn load(path: impl AsRef<Path>) -> Result<World> {
     let header: Header =
         serde_json::from_reader(&mut reader).context("reading snapshot version")?;
     ensure!(
-        (2..=SAVE_VERSION).contains(&header.version),
-        "unsupported save version {} (expected {SAVE_VERSION}); cylindrical v1 worlds cannot be resumed on a spherical grid; generate a new planet",
+        header.version == SAVE_VERSION,
+        "unsupported save version {} (expected {SAVE_VERSION}); generate a new planet",
         header.version
     );
     reader.seek(SeekFrom::Start(0))?;
     let mut world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
-    let upgrade = world.version == 2;
-    let upgrade_camps = world.version < 4;
-    world.version = SAVE_VERSION;
-    if upgrade_camps {
-        world.next_band_id = world
-            .tribes
-            .iter()
-            .map(|t| u64::from(t.id) + 1)
-            .chain(
-                world
-                    .events
-                    .iter()
-                    .flat_map(|e| [Some(e.tribe), e.other])
-                    .flatten()
-                    .map(|id| u64::from(id) + 1),
-            )
-            .chain(
-                world
-                    .insights
-                    .recent_deaths
-                    .iter()
-                    .map(|r| u64::from(r.tribe) + 1),
-            )
-            .max()
-            .unwrap_or(0);
-        humanity_world::initialize_cultures(&mut world, false);
-    }
     validate(&world).context("invalid snapshot")?;
-    if upgrade {
-        humanity_world::upgrade_subsistence(&mut world);
-    }
     if world.insights.since_day.is_none() {
         world.record_population();
     }
@@ -302,20 +272,66 @@ pub fn validate(w: &World) -> Result<()> {
                 && site_ids.insert(s.id)
                 && s.id < w.next_site_id
                 && !s.name.is_empty()
-                && s.season < 4
+                && (1..=15).contains(&s.known_seasons)
+                && finite_range(s.condition, 0., 1.)
+                && s.last_maintained
+                    .is_none_or(|day| day >= s.founded && day <= s.last_visited)
                 && s.founded <= s.last_visited
                 && s.last_visited <= w.day
                 && u64::from(s.founder_band) < w.next_band_id
                 && (living_cultures.contains(&s.culture) || ids.contains(&s.founder_band))
-                && site_keys.insert((s.culture, s.cell, s.kind as u8, s.season)),
+                && site_keys.insert((s.culture, s.cell)),
             "invalid cultural site {}",
+            s.id
+        );
+        let o = &s.occupation;
+        let since = o.since;
+        ensure!(
+            since >= s.founded
+                && since <= w.day
+                && o.occupied_days <= w.day - since + 1
+                && o.episodes <= o.occupied_days
+                && u64::from(o.longest_stay) <= o.occupied_days
+                && o.continuous_days <= o.longest_stay
+                && (o.present_people > 0) == (o.continuous_days > 0)
+                && (o.present_people == 0 || s.last_visited == w.day)
+                && !o.seasons.is_empty()
+                && o.seasons.len() <= 8,
+            "invalid site occupation {}",
+            s.id
+        );
+        let period = w.day / u64::from(w.config.season_days);
+        let mut previous = None;
+        let mut days = 0_u64;
+        for season in &o.seasons {
+            ensure!(
+                season.period <= period
+                    && season.period.saturating_add(8) > period
+                    && previous.is_none_or(|p| season.period == p + 1)
+                    && season.season
+                        == ((season.period + if w.grid.latitude(s.cell) < 0. { 2 } else { 0 }) % 4)
+                            as u32
+                    && season.occupied_days <= w.config.season_days
+                    && season.person_days >= u64::from(season.occupied_days),
+                "invalid site season history {}",
+                s.id
+            );
+            previous = Some(season.period);
+            days += u64::from(season.occupied_days);
+        }
+        ensure!(
+            previous == Some(period) && days <= o.occupied_days,
+            "stale site history {}",
             s.id
         );
     }
     for e in &w.events {
         if matches!(
             e.kind,
-            EventKind::CultureMixing | EventKind::CultureDivergence | EventKind::SiteFounded
+            EventKind::CultureMixing
+                | EventKind::CultureDivergence
+                | EventKind::SiteFounded
+                | EventKind::SiteAbandoned
         ) {
             ensure!(
                 (e.amount as usize) < w.cultures.len(),
@@ -552,50 +568,6 @@ mod tests {
         .unwrap()
     }
     #[test]
-    fn spherical_v2_upgrade_preserves_existing_state_and_runs_only_once() {
-        let original = world();
-        let mut value = serde_json::to_value(&original).unwrap();
-        value["version"] = 2.into();
-        for c in value["cells"].as_array_mut().unwrap() {
-            for field in ["aquatic", "wood", "fiber", "toolstone"] {
-                c["resources"].as_object_mut().unwrap().remove(field);
-            }
-        }
-        for t in value["tribes"].as_array_mut().unwrap() {
-            for field in ["knowledge", "equipment", "fishing_effort"] {
-                t.as_object_mut().unwrap().remove(field);
-            }
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("old-sphere.json");
-        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        let mut upgraded = load(&path).unwrap();
-        assert_eq!(upgraded.rng.state, original.rng.state);
-        assert_eq!(upgraded.population(), original.population());
-        assert_eq!(upgraded.day, original.day);
-        assert_eq!(
-            upgraded.cells[10].resources.plants,
-            original.cells[10].resources.plants
-        );
-        assert!(upgraded.tribes[0].knowledge.level(Skill::Knapping) > 0.);
-        assert!(
-            upgraded
-                .cells
-                .iter()
-                .any(|c| c.resources.aquatic.total() > 0.)
-        );
-        upgraded.tribes[0].knowledge = Knowledge::default();
-        save(&upgraded, &path).unwrap();
-        let reloaded = load(&path).unwrap();
-        assert_eq!(reloaded.tribes[0].knowledge.level(Skill::Knapping), 0.);
-        assert_eq!(
-            serde_json::to_string(&upgraded).unwrap(),
-            serde_json::to_string(&reloaded).unwrap()
-        );
-        upgraded.tribes[0].knowledge.practitioners[0][1] = 1.1;
-        assert!(validate(&upgraded).is_err());
-    }
-    #[test]
     fn atomic_save_resume_and_bad_state_rejection() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("world.json");
@@ -619,52 +591,6 @@ mod tests {
     }
 
     #[test]
-    fn v3_cultures_upgrade_without_changing_people_or_rng_and_resume_exactly() {
-        let original = world();
-        let mut old = serde_json::to_value(&original).unwrap();
-        old["version"] = serde_json::json!(3);
-        for field in ["cultures", "sites", "next_site_id", "next_band_id"] {
-            old.as_object_mut().unwrap().remove(field);
-        }
-        for t in old["tribes"].as_array_mut().unwrap() {
-            for field in [
-                "culture",
-                "camp_tradition",
-                "camp_pressure_days",
-                "parent_band",
-                "isolation_days",
-                "last_cultural_contact",
-                "contact_culture",
-                "contact_days",
-                "last_foreign_contact",
-                "residence_days",
-            ] {
-                t.as_object_mut().unwrap().remove(field);
-            }
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("legacy.json");
-        fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
-        let mut upgraded = load(&path).unwrap();
-        assert_eq!(upgraded.population(), original.population());
-        assert_eq!(upgraded.rng.state, original.rng.state);
-        assert!(!upgraded.cultures.is_empty());
-        assert_eq!(upgraded.next_band_id, original.next_band_id);
-        humanity_sim::Simulation::default().advance(&mut upgraded, 80);
-        save(&upgraded, &path).unwrap();
-        let mut resumed = load(&path).unwrap();
-        humanity_sim::Simulation::default().advance(&mut upgraded, 80);
-        humanity_sim::Simulation::default().advance(&mut resumed, 80);
-        assert_eq!(
-            serde_json::to_value(&upgraded).unwrap(),
-            serde_json::to_value(&resumed).unwrap()
-        );
-        validate(&resumed).unwrap();
-        resumed.tribes[0].culture = u32::MAX;
-        assert!(validate(&resumed).is_err());
-    }
-
-    #[test]
     fn missing_diagnostics_get_an_honest_baseline_and_corruption_is_rejected() {
         let mut w = world();
         humanity_sim::Simulation::default().advance(&mut w, 70);
@@ -684,11 +610,17 @@ mod tests {
     }
 
     #[test]
-    fn cylindrical_versions_are_rejected_before_decoding_spherical_geometry() {
+    fn old_versions_are_rejected_before_decoding_world_state() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cylinder.json");
-        fs::write(&path, r#"{"version":1,"config":{"width":128,"height":64}}"#).unwrap();
-        let error = load(path).unwrap_err().to_string();
-        assert!(error.contains("cylindrical"));
+        let path = dir.path().join("old.json");
+        for version in 1..SAVE_VERSION {
+            fs::write(&path, format!("{{\"version\":{version}}}")).unwrap();
+            assert!(
+                load(&path)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("generate a new planet")
+            );
+        }
     }
 }

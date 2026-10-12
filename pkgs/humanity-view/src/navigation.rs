@@ -1,7 +1,7 @@
 //! Bounded, paginated entity browser. Entries use stable simulation IDs.
 use crate::*;
 use bevy::{input::mouse::MouseWheel, window::PrimaryWindow};
-use humanity_core::{SiteKind, Tribe};
+use humanity_core::Tribe;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -131,40 +131,21 @@ fn rows(world: &World, tab: Tab, filter: Option<Filter>) -> Vec<Row> {
                 .collect()
         }
         Tab::Camps => {
-            let mut population = BTreeMap::<CellId, u64>::new();
-            for t in &world.tribes {
-                *population.entry(t.cell).or_default() += u64::from(t.headcount());
-            }
-            // Present one culture/place entry for the legacy per-season records.
-            let mut places = BTreeMap::new();
-            for s in &world.sites {
-                let entry = places
-                    .entry((s.culture, s.cell, s.kind as u8))
-                    .or_insert((s.id, 0_u8));
-                entry.0 = entry.0.min(s.id);
-                entry.1 |= 1 << s.season;
-            }
+            let mut places: Vec<_> = world.sites.iter().collect();
+            places.sort_by_key(|s| (s.culture, s.cell, s.id));
             places
                 .into_iter()
-                .map(|((culture, cell, kind), (id, seasons))| {
-                    let use_label = if kind == SiteKind::FishingSettlement as u8 {
-                        "Fishing".into()
-                    } else {
-                        ["Spr", "Sum", "Aut", "Win"]
-                            .into_iter()
-                            .enumerate()
-                            .filter(|(i, _)| seasons & (1 << i) != 0)
-                            .map(|(_, s)| s)
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    };
-                    Row {
-                        key: Key::Camp(id),
-                        label: format!(
-                            "Camp {id} / C{culture} / cell {cell}\n{use_label} / {} people in cell",
-                            population.get(&cell).copied().unwrap_or(0)
-                        ),
-                    }
+                .map(|s| Row {
+                    key: Key::Camp(s.id),
+                    label: format!(
+                        "{} / C{} / cell {}\n{}\n{} present / condition {:.0}%",
+                        s.name,
+                        s.culture,
+                        s.cell,
+                        s.pattern(world.config.season_days),
+                        s.occupation.present_people,
+                        s.condition * 100.
+                    ),
                 })
                 .collect()
         }
@@ -445,7 +426,14 @@ pub fn update(
 ) {
     let revision = view.snapshot_revision;
     let insights = view.insights_open;
-    let page_size = ((window.height() - 350.) / 64.).floor().clamp(1., 12.) as usize;
+    let row_height = if view.navigation.tab == Tab::Camps {
+        84.
+    } else {
+        64.
+    };
+    let page_size = ((window.height() - 350.) / row_height)
+        .floor()
+        .clamp(1., 12.) as usize;
     let nav = &mut view.navigation;
     if nav.revision != revision {
         *nav = Navigator {
@@ -582,7 +570,7 @@ pub fn update(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
-    use humanity_core::{CulturalSite, Language, PlanetConfig};
+    use humanity_core::{CulturalSite, Language, PlanetConfig, SiteKind};
 
     fn world() -> World {
         humanity_world::generate(PlanetConfig {
@@ -606,19 +594,17 @@ mod tests {
         let cell = w.tribes[1].cell;
         // Ensure the founder has moved elsewhere; it must still be reachable.
         w.tribes[0].cell = w.grid.neighbors(cell).next().unwrap();
-        for season in 0..4 {
-            w.sites.push(CulturalSite {
-                id: u64::from(season),
-                name: format!("Camp {season}"),
-                cell,
-                culture: w.tribes[0].culture,
-                founder_band: founder,
-                kind: SiteKind::SeasonalCamp,
-                season,
-                founded: 0,
-                last_visited: 0,
-            });
-        }
+        let mut site = CulturalSite::new(
+            0,
+            cell,
+            w.tribes[0].culture,
+            founder,
+            SiteKind::ResidentialCamp,
+            0,
+            0,
+        );
+        site.known_seasons = 15;
+        w.sites.push(site);
         let mut view = ViewState::default();
         action(&w, &mut view, Action::Tab(Tab::Camps));
         refresh(&w, &mut view.navigation);

@@ -50,8 +50,8 @@ families. Click a band to center and follow it. Click a camp to center its cell 
 list resident bands plus its founder (if alive elsewhere); then choose a band to
 follow. Culture/language entries open their member-band lists. Language populations
 are **share-weighted estimates**, since bands store language mixtures rather than
-individual speakers. Legacy seasonal records for the same culture/cell/kind appear
-as one browser entry listing their recorded seasons. The list is paginated and
+individual speakers. Camps are one record per culture/cell, with observed use and
+condition shown in the browser. The list is paginated and
 refreshes during simulation; Space and -/+ continue controlling time. Alt+arrows
 operate the browser without rotating the globe.
 
@@ -87,9 +87,25 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v4:** also persists residential customs, crowding pressure, parent bands and the next unique band ID. Spherical v2/v3 saves upgrade deterministically on load, preserving people and RNG. Oversized bands split when simulation resumes. V2 also initializes knowledge and subsistence resources. Future trajectories change under the new rules. Cylindrical v1 saves require a new planet. Geometry is rebuilt from resolution rather than duplicated in JSON.
+**Save format v5:** stores multi-season camp use, bounded occupation histories,
+condition and maintenance along with cultures, ecology and demographics. **Start a
+new world: older save versions are not supported or migrated.** Geometry is rebuilt
+from resolution rather than duplicated in JSON.
 
-V4 also stores cultural identities/ancestry, isolation/contact memory and named cultural locations. A location persists while its founding band or owning culture survives, including when temporarily unoccupied.
+Each culture/cell has one remembered place, with fishing or residential function.
+The current stay, separate occupation episodes, total occupied days and eight recent
+season records distinguish repeated visits from continuous residence. Labels include
+seasonal use, multi-season use, long-stay base (two continuous seasons), and observed
+year-round residence (one continuous year). Learning a new season normally requires
+10 occupied days within that season; its association does not imply permanent residence.
+
+Camps lose condition without upkeep. Healthy, provisioned associated residents
+maintain them; an unsupported visit updates occupancy but does not repair the camp.
+From full condition, neglected residential camps disappear after roughly **3 years**,
+fishing locations after roughly **6 years**. They also disappear when neither founder
+nor owning culture survives. A normal annual absence can be followed by repair on
+return. Attachment weakens with condition; abandoned camps free site slots and can
+later be re-established with new IDs. Rates are tunable in `humanity-cultures`.
 
 ### Wildlife, fishing and cultures
 
