@@ -43,14 +43,39 @@ pub fn load(path: impl AsRef<Path>) -> Result<World> {
     let header: Header =
         serde_json::from_reader(&mut reader).context("reading snapshot version")?;
     ensure!(
-        header.version == SAVE_VERSION || header.version == 2,
+        (2..=SAVE_VERSION).contains(&header.version),
         "unsupported save version {} (expected {SAVE_VERSION}); cylindrical v1 worlds cannot be resumed on a spherical grid; generate a new planet",
         header.version
     );
     reader.seek(SeekFrom::Start(0))?;
     let mut world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
     let upgrade = world.version == 2;
+    let upgrade_camps = world.version < 4;
     world.version = SAVE_VERSION;
+    if upgrade_camps {
+        world.next_band_id = world
+            .tribes
+            .iter()
+            .map(|t| u64::from(t.id) + 1)
+            .chain(
+                world
+                    .events
+                    .iter()
+                    .flat_map(|e| [Some(e.tribe), e.other])
+                    .flatten()
+                    .map(|id| u64::from(id) + 1),
+            )
+            .chain(
+                world
+                    .insights
+                    .recent_deaths
+                    .iter()
+                    .map(|r| u64::from(r.tribe) + 1),
+            )
+            .max()
+            .unwrap_or(0);
+        humanity_world::initialize_cultures(&mut world, false);
+    }
     validate(&world).context("invalid snapshot")?;
     if upgrade {
         humanity_world::upgrade_subsistence(&mut world);
@@ -160,7 +185,41 @@ pub fn validate(w: &World) -> Result<()> {
         );
     }
     ids.clear();
+    ensure!(
+        w.next_band_id <= u64::from(u32::MAX) + 1,
+        "invalid next band ID"
+    );
+    for (i, c) in w.cultures.iter().enumerate() {
+        ensure!(
+            c.id as usize == i
+                && !c.name.is_empty()
+                && c.founded <= w.day
+                && c.parents.len() <= 2
+                && c.parents.iter().all(|&p| p < c.id)
+                && (c.parents.len() != 2 || c.parents[0] < c.parents[1]),
+            "invalid culture {}",
+            c.id
+        );
+    }
+    let mut living_cultures = HashSet::new();
     for t in &w.tribes {
+        ensure!(
+            (t.culture as usize) < w.cultures.len()
+                && t.contact_culture
+                    .is_none_or(|id| (id as usize) < w.cultures.len())
+                && t.last_cultural_contact <= w.day
+                && t.last_foreign_contact <= w.day,
+            "invalid cultural membership in band {}",
+            t.id
+        );
+        living_cultures.insert(t.culture);
+        ensure!(
+            u64::from(t.id) < w.next_band_id
+                && t.parent_band.is_none_or(|id| id < t.id)
+                && t.camp_pressure_days <= 1_000_000_000,
+            "invalid residential state in band {}",
+            t.id
+        );
         ensure!(
             ids.insert(t.id) && valid_cell(t.cell),
             "invalid tribe {}",
@@ -234,7 +293,41 @@ pub fn validate(w: &World) -> Result<()> {
             "language shares must sum to one"
         );
     }
+    let mut site_ids = HashSet::new();
+    let mut site_keys = HashSet::new();
+    for s in &w.sites {
+        ensure!(
+            (s.culture as usize) < w.cultures.len()
+                && valid_cell(s.cell)
+                && site_ids.insert(s.id)
+                && s.id < w.next_site_id
+                && !s.name.is_empty()
+                && s.season < 4
+                && s.founded <= s.last_visited
+                && s.last_visited <= w.day
+                && u64::from(s.founder_band) < w.next_band_id
+                && (living_cultures.contains(&s.culture) || ids.contains(&s.founder_band))
+                && site_keys.insert((s.culture, s.cell, s.kind as u8, s.season)),
+            "invalid cultural site {}",
+            s.id
+        );
+    }
     for e in &w.events {
+        if matches!(
+            e.kind,
+            EventKind::CultureMixing | EventKind::CultureDivergence | EventKind::SiteFounded
+        ) {
+            ensure!(
+                (e.amount as usize) < w.cultures.len(),
+                "invalid cultural event"
+            );
+        }
+        if e.kind == EventKind::BandFission {
+            ensure!(
+                e.amount > 0 && e.other.is_some_and(|id| u64::from(id) < w.next_band_id),
+                "invalid fission event"
+            );
+        }
         if matches!(e.kind, EventKind::Innovation | EventKind::KnowledgeExchange) {
             ensure!(
                 (e.amount as usize) < Skill::ALL.len(),
@@ -360,6 +453,22 @@ fn validate_insights(w: &World) -> Result<()> {
 }
 
 pub fn summary(w: &World) -> serde_json::Value {
+    let mut culture_bands = vec![0_u64; w.cultures.len()];
+    let mut culture_people = vec![0_u64; w.cultures.len()];
+    for t in &w.tribes {
+        culture_bands[t.culture as usize] += 1;
+        culture_people[t.culture as usize] += u64::from(t.headcount());
+    }
+    let cultures: Vec<_> = w
+        .cultures
+        .iter()
+        .filter(|c| culture_bands[c.id as usize] > 0)
+        .map(|c| {
+            serde_json::json!({ "id":c.id, "name":c.name, "variant":c.variant,
+            "parents":c.parents, "founded":c.founded, "bands":culture_bands[c.id as usize],
+            "population":culture_people[c.id as usize] })
+        })
+        .collect();
     let mut biomes = std::collections::BTreeMap::<String, u64>::new();
     let mut temperature = 0_f64;
     let mut snow = 0_u64;
@@ -401,6 +510,16 @@ pub fn summary(w: &World) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({
+        "living_cultures": cultures,
+        "cultural_sites": w.sites,
+        "band_sizes": {
+            "mean": w.population() as f64 / w.tribes.len().max(1) as f64,
+            "largest": w.tribes.iter().map(Tribe::headcount).max().unwrap_or(0),
+            "over_local_limit": w.tribes.iter().filter(|t| t.headcount() > w.camp_limit(t)).count(),
+        },
+        "camp_traditions": CampTradition::ALL.into_iter().map(|tradition| {
+            (tradition.label(), w.tribes.iter().filter(|t| t.camp_tradition == tradition).count())
+        }).collect::<std::collections::BTreeMap<_, _>>(),
         "wildlife":wildlife, "adult_knowledge":knowledge,
         "aquatic_food":w.cells.iter().map(|c|f64::from(c.resources.aquatic.total())).sum::<f64>(),
         "boat_places":w.tribes.iter().map(|t|f64::from(t.equipment.boat_places)).sum::<f64>(),
@@ -497,6 +616,52 @@ mod tests {
         assert_eq!(saved, fs::read(&path).unwrap());
         restored.version += 1;
         assert!(validate(&restored).is_err());
+    }
+
+    #[test]
+    fn v3_cultures_upgrade_without_changing_people_or_rng_and_resume_exactly() {
+        let original = world();
+        let mut old = serde_json::to_value(&original).unwrap();
+        old["version"] = serde_json::json!(3);
+        for field in ["cultures", "sites", "next_site_id", "next_band_id"] {
+            old.as_object_mut().unwrap().remove(field);
+        }
+        for t in old["tribes"].as_array_mut().unwrap() {
+            for field in [
+                "culture",
+                "camp_tradition",
+                "camp_pressure_days",
+                "parent_band",
+                "isolation_days",
+                "last_cultural_contact",
+                "contact_culture",
+                "contact_days",
+                "last_foreign_contact",
+                "residence_days",
+            ] {
+                t.as_object_mut().unwrap().remove(field);
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        let mut upgraded = load(&path).unwrap();
+        assert_eq!(upgraded.population(), original.population());
+        assert_eq!(upgraded.rng.state, original.rng.state);
+        assert!(!upgraded.cultures.is_empty());
+        assert_eq!(upgraded.next_band_id, original.next_band_id);
+        humanity_sim::Simulation::default().advance(&mut upgraded, 80);
+        save(&upgraded, &path).unwrap();
+        let mut resumed = load(&path).unwrap();
+        humanity_sim::Simulation::default().advance(&mut upgraded, 80);
+        humanity_sim::Simulation::default().advance(&mut resumed, 80);
+        assert_eq!(
+            serde_json::to_value(&upgraded).unwrap(),
+            serde_json::to_value(&resumed).unwrap()
+        );
+        validate(&resumed).unwrap();
+        resumed.tribes[0].culture = u32::MAX;
+        assert!(validate(&resumed).is_err());
     }
 
     #[test]

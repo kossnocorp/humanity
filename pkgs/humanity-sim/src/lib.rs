@@ -1,6 +1,7 @@
 //! Daily, deterministic aggregate simulation. Sorted sparse spatial indices avoid
 //! all-pairs agent scans and per-cell allocations. Scratch is not persistent state.
 use humanity_core::*;
+mod social;
 mod subsistence;
 
 #[derive(Default)]
@@ -48,6 +49,8 @@ impl Simulation {
         self.tribes.rebuild(world.tribes.iter().map(|t| t.cell));
         self.contacts(world);
         demography(world);
+        social::daily(world);
+        social::fission(world);
         world.herds.retain(|h| h.animals > 0);
         world.tribes.retain(|t| t.headcount() > 0);
         world.record_population();
@@ -56,11 +59,36 @@ impl Simulation {
     fn move_tribes(&self, world: &mut World) {
         let mut events = Vec::new();
         let radius = world.config.radius_km();
+        let mut cultural_sites = vec![Vec::new(); world.cultures.len()];
+        let mut founded_sites = std::collections::BTreeMap::<u32, Vec<_>>::new();
+        for site in &world.sites {
+            if site.kind == SiteKind::FishingSettlement
+                || site.season == world.local_season(site.cell)
+            {
+                cultural_sites[site.culture as usize].push(site);
+                founded_sites
+                    .entry(site.founder_band)
+                    .or_default()
+                    .push(site);
+            }
+        }
         for index in 0..world.tribes.len() {
             let crossings = subsistence::crossing_candidates(world, &world.tribes[index]);
             let tribe = &mut world.tribes[index];
             let here = tribe.cell;
             let n = tribe.headcount().max(1) as f32;
+            let sites = &cultural_sites[tribe.culture as usize];
+            let home = sites
+                .iter()
+                .chain(founded_sites.get(&tribe.id).into_iter().flatten())
+                .min_by(|a, b| {
+                    world
+                        .grid
+                        .angular_distance(here, a.cell)
+                        .total_cmp(&world.grid.angular_distance(here, b.cell))
+                });
+            let secure =
+                tribe.food / n >= SOCIAL.scarce_food_days && tribe.health >= SOCIAL.scarce_health;
             let score = |id: CellId| {
                 let c = &world.cells[id as usize];
                 if c.biome.water() {
@@ -89,7 +117,26 @@ impl Simulation {
                     + r.game * 0.5
                     + aquatic * tribe.knowledge.level(Skill::Fishing))
                     / (n * (1. + crowd * 0.6));
-                food.min(25.) + (herds as f32 / n * 6.).min(18.) + (r.grazing / 4000.).min(3.)
+                let attachment = if secure {
+                    home.map_or(0., |site| {
+                        let progress = (world.grid.angular_distance(here, site.cell)
+                            - world.grid.angular_distance(id, site.cell))
+                            * radius
+                            / world.config.cell_km;
+                        progress * SOCIAL.seasonal_return_score
+                            + if site.cell == id {
+                                SOCIAL.site_loyalty_score
+                            } else {
+                                0.
+                            }
+                    })
+                } else {
+                    0.
+                };
+                attachment
+                    + food.min(25.)
+                    + (herds as f32 / n * 6.).min(18.)
+                    + (r.grazing / 4000.).min(3.)
                     - c.weather.snow * 10.
                     - (c.weather.temperature - 18.).abs() * 0.18
                     + if c.river > 0. { 2. } else { 0. }
@@ -140,6 +187,7 @@ impl Simulation {
             }
             if best != here {
                 tribe.cell = best;
+                tribe.residence_days = 0;
                 tribe.travel -= best_cost;
                 world.totals.migrations += 1;
                 if by_water {
@@ -372,6 +420,7 @@ impl Simulation {
                         probability: if a_wins { win } else { 1. - win },
                     });
                 } else {
+                    social::friendly_contact(ta, tb, world.day);
                     let a_language = dominant(&ta.languages);
                     if let Some(skill) = subsistence::exchange(ta, tb, language, &mut world.rng) {
                         world.totals.knowledge_exchanges += 1;

@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 humanity-grid.workspace = true
+humanity-cultures.workspace = true
 serde.workspace = true

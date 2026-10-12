@@ -50,7 +50,7 @@ pub fn setup(mut commands: Commands) {
                         TextColor(GOLD),
                     ));
                     p.spawn((
-                        Text::new("BEFORE THE FIRST SETTLEMENTS"),
+                        Text::new("CAMPS, CULTURES & SEASONS"),
                         TextFont {
                             font_size: 11.,
                             ..default()
@@ -77,7 +77,7 @@ pub fn setup(mut commands: Commands) {
             p.spawn((Hud::Notes, Text::default(), TextFont { font_size: 14., ..default() }, TextColor(INK)));
             p.spawn((Text::new("RECENT ENCOUNTERS"), TextFont { font_size: 12., ..default() }, TextColor(GOLD)));
             p.spawn((Hud::Chronicle, Text::default(), TextFont { font_size: 12., ..default() }, TextColor(MUTED)));
-            p.spawn((Text::new("Cream camps: human bands\nOchre animals: migrating herds\nBlue threads: rivers  /  Pale ground: snow"),
+            p.spawn((Text::new("Cream camps: human bands\nCyan houses: fishing settlements\nViolet tents: seasonal locations\nOchre animals: migrating herds\nBlue threads: rivers  /  Pale ground: snow"),
                 TextFont { font_size: 11., ..default() }, TextColor(MUTED)));
         });
     commands.spawn((
@@ -190,6 +190,15 @@ pub fn update(
                         .join("  ");
                     let children = t.people.female[0] + t.people.male[0];
                     let elders = t.people.female[2] + t.people.male[2];
+                    let culture = &w.cultures[t.culture as usize];
+                    body.push_str(&format!("\n\nCULTURE {} / {}\n{}\nParents: {:?}\nIsolation {} days\nMixing contacts {} / {} days\n",
+                        culture.id, culture.name, culture.variant.label(), culture.parents,
+                        t.isolation_days, t.contact_days, humanity_core::SOCIAL.mixing_contact_days));
+                    body.push_str(&format!("\n\nCAMP CUSTOM / {}\nCurrent split threshold: {} people\nCrowding pressure: {} / {} days\n",
+                        t.camp_tradition.label(), w.camp_limit(t), t.camp_pressure_days, t.camp_tradition.pressure_days()));
+                    if let Some(parent) = t.parent_band {
+                        body.push_str(&format!("Offshoot of band {parent}\n"));
+                    }
                     body.push_str(&format!("\nBAND {}   /   {} people\nHealth {:.0}%  /  food {:.1} days\nFemale {}  /  Male {}\nYoung {}  /  Adult {}  /  Elder {}\nHunters {}  /  Gatherers {}\nHealers {}  /  Guides {}\nLanguage families\n{}\n{} band(s) share this cell",
                         t.id, t.headcount(), t.health * 100., t.food / t.headcount().max(1) as f32,
                         t.people.female.iter().sum::<u32>(), t.people.male.iter().sum::<u32>(), children, t.people.adults(), elders,
@@ -217,6 +226,24 @@ pub fn update(
                 } else {
                     body.push_str("\nNo human band here.\nF follows the next band.");
                 }
+                for s in w.sites.iter().filter(|s| s.cell == id) {
+                    body.push_str(&format!(
+                        "\n\nLOCATION / {}\n{:?} / culture {}\nFounded day {} / visited {}\n{}\n",
+                        s.name,
+                        s.kind,
+                        s.culture,
+                        s.founded,
+                        s.last_visited,
+                        if s.kind == humanity_core::SiteKind::SeasonalCamp {
+                            format!(
+                                "Local season: {}",
+                                ["spring", "summer", "autumn", "winter"][s.season as usize]
+                            )
+                        } else {
+                            "Year-round fishing location".into()
+                        }
+                    ));
+                }
                 body
             } else {
                 "Click a cell on the globe to inspect\nclimate, resources, herds and people.\n\nA closed sphere: 12 pentagons,\nall remaining cells hexagons.\nDrag freely across either pole.\nSeasons reverse across the equator.".into()
@@ -237,6 +264,10 @@ pub fn update(
                             | EventKind::Innovation
                             | EventKind::WaterCrossing
                             | EventKind::Fishing
+                            | EventKind::BandFission
+                            | EventKind::CultureDivergence
+                            | EventKind::CultureMixing
+                            | EventKind::SiteFounded
                     )
                 })
                 .take(4)
@@ -259,6 +290,14 @@ pub fn update(
                         ),
                         EventKind::WaterCrossing => "crossed water by boat".into(),
                         EventKind::Fishing => format!("fished {} food-days", e.amount),
+                        EventKind::BandFission => {
+                            format!("{} people formed band {}", e.amount, e.other.unwrap_or(0))
+                        }
+                        EventKind::CultureDivergence => {
+                            format!("isolation: culture {} formed", e.amount)
+                        }
+                        EventKind::CultureMixing => format!("joined mixed culture {}", e.amount),
+                        EventKind::SiteFounded => "established a remembered location".into(),
                         _ => "band lost".into(),
                     };
                     format!("Day {} / Band {} / {}", e.day, e.tribe, action)

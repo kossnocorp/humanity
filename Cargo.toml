@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 humanity-grid = { path = "pkgs/humanity-grid" }
 humanity-core = { path = "pkgs/humanity-core" }
+humanity-cultures = { path = "pkgs/humanity-cultures" }
 humanity-world = { path = "pkgs/humanity-world" }
 humanity-sim = { path = "pkgs/humanity-sim" }
 humanity-save = { path = "pkgs/humanity-save" }

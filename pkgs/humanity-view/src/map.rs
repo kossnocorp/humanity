@@ -23,6 +23,8 @@ pub struct MapMeshes {
     forest: Handle<StandardMaterial>,
     mountain: Handle<StandardMaterial>,
     fish: Handle<StandardMaterial>,
+    fishing_site: Handle<StandardMaterial>,
+    seasonal_site: Handle<StandardMaterial>,
     coarse: Grid,
     coarse_cells: Vec<u32>,
     revision: u64,
@@ -198,6 +200,8 @@ pub fn setup(
         forest: icon_material(&icons.forest),
         mountain: icon_material(&icons.mountain),
         fish: icon_material(&icons.fish),
+        fishing_site: icon_material(&icons.fishing_site),
+        seasonal_site: icon_material(&icons.seasonal_site),
         coarse,
         coarse_cells,
         revision: view.snapshot_revision,
@@ -487,9 +491,20 @@ pub fn redraw(
     }
     let mut count = 0;
     for (cell, material, side) in world
-        .tribes
+        .sites
         .iter()
-        .map(|t| (t.cell, &handles.tribe, -1.))
+        .map(|s| {
+            (
+                s.cell,
+                if s.kind == humanity_core::SiteKind::FishingSettlement {
+                    &handles.fishing_site
+                } else {
+                    &handles.seasonal_site
+                },
+                2.5,
+            )
+        })
+        .chain(world.tribes.iter().map(|t| (t.cell, &handles.tribe, -1.)))
         .chain(world.herds.iter().map(|h| (h.cell, &handles.herd, 1.)))
     {
         if count >= 2200 {

@@ -106,12 +106,17 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
         cells,
         herds: Vec::new(),
         tribes: Vec::new(),
+        next_band_id: 0,
+        cultures: Vec::new(),
+        sites: Vec::new(),
+        next_site_id: 0,
         events: Default::default(),
         totals: Totals::default(),
         insights: PopulationInsights::default(),
     };
     update_environment(&mut world, true);
     populate(&mut world)?;
+    initialize_cultures(&mut world, true);
     world.record_population();
     Ok(world)
 }
@@ -283,12 +288,20 @@ fn populate(world: &mut World) -> Result<(), String> {
             travel: 0.,
         });
     }
-    let band = (world.config.population / 20_000).max(60);
     let mut remaining = world.config.population;
     while remaining > 0 {
-        let n = remaining.min(band + world.rng.index((band / 2).max(1) as usize) as u32);
-        remaining -= n;
         let id = habitable[world.rng.index(habitable.len())];
+        let camp_tradition = initial_camp_tradition(world, id, world.tribes.len() as u32);
+        let target = camp_tradition.normal_limit();
+        let n = remaining
+            .min(
+                (target as f32 * SOCIAL.initial_size_min_fraction) as u32
+                    + world.rng.index(
+                        ((target as f32 * SOCIAL.initial_size_spread_fraction) as usize).max(1),
+                    ) as u32,
+            )
+            .max(1);
+        remaining -= n;
         let female = [n * 15 / 100, n * 30 / 100, n * 5 / 100];
         let male = [
             n * 15 / 100,
@@ -324,9 +337,94 @@ fn populate(world: &mut World) -> Result<(), String> {
             knowledge: initial_knowledge(world, id, world.tribes.len() as u32),
             equipment: Equipment::default(),
             fishing_effort: 0.,
+            camp_tradition,
+            camp_pressure_days: 0,
+            parent_band: None,
+            culture: 0,
+            isolation_days: 0,
+            last_cultural_contact: 0,
+            contact_culture: None,
+            contact_days: 0,
+            last_foreign_contact: 0,
+            residence_days: 0,
         });
     }
+    world.next_band_id = world.tribes.len() as u64;
     Ok(())
+}
+
+/// Ecology biases customs but does not determine them. Isolated RNG also makes
+/// old-save initialization independent of the gameplay random stream.
+pub fn initial_camp_tradition(world: &World, cell: CellId, band: u32) -> CampTradition {
+    initial_culture_variant(world, cell, band).rules().camp
+}
+
+pub fn initial_culture_variant(world: &World, cell: CellId, band: u32) -> CultureVariant {
+    let mut rng = Rng::new(world.config.seed ^ u64::from(band).wrapping_mul(0xd6e8feb86659fd93));
+    let waterside = world.cells[cell as usize].river > 0.
+        || world
+            .grid
+            .neighbors(cell)
+            .any(|n| world.cells[n as usize].biome.water());
+    let weight = |variant: CultureVariant| {
+        let rules = variant.rules();
+        if waterside {
+            rules.waterside_weight
+        } else {
+            rules.inland_weight
+        }
+    };
+    let total: u32 = CultureVariant::ALL.into_iter().map(weight).sum();
+    let mut roll = rng.index(total as usize) as u32;
+    for variant in CultureVariant::ALL {
+        if roll < weight(variant) {
+            return variant;
+        }
+        roll -= weight(variant);
+    }
+    CultureVariant::CooperativeForagers
+}
+
+/// Initial identities span multiple camps with a shared language and strategy.
+/// Upgrades preserve existing knowledge and the gameplay RNG.
+pub fn initialize_cultures(world: &mut World, seed_knowledge: bool) {
+    let mut groups = std::collections::BTreeMap::new();
+    for i in 0..world.tribes.len() {
+        let t = &world.tribes[i];
+        let variant = initial_culture_variant(world, t.cell, t.id);
+        let language = t
+            .languages
+            .iter()
+            .max_by(|a, b| a.share.total_cmp(&b.share))
+            .map_or(0, |l| l.family);
+        let id = *groups
+            .entry((language, variant as usize))
+            .or_insert_with(|| {
+                let id = world.cultures.len() as u32;
+                world.cultures.push(Culture {
+                    id,
+                    name: format!("Tradition {}", id + 1),
+                    variant,
+                    parents: Vec::new(),
+                    founded: world.day,
+                });
+                id
+            });
+        let t = &mut world.tribes[i];
+        t.culture = id;
+        t.camp_tradition = variant.rules().camp;
+        t.last_cultural_contact = world.day;
+        if seed_knowledge {
+            for (skill, floor) in [
+                (Skill::Fishing, variant.rules().fishing_floor),
+                (Skill::Preservation, variant.rules().preservation_floor),
+            ] {
+                if t.knowledge.level(skill) < floor {
+                    t.knowledge.seed(skill, floor);
+                }
+            }
+        }
+    }
 }
 
 /// Also used for v2 upgrades; a separate seed avoids changing gameplay RNG.

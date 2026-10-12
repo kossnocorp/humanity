@@ -34,6 +34,37 @@ Friendly encounters transfer one randomly selected topic from the better-informe
 
 Traditions: stone working, cordage/baskets, fishing, watercraft, tracking, cooperative hunting, trapping, plant processing, preservation, clothing, care/remedies, oral teaching and water navigation. Hunting familiarity improves through successful and failed hunts. Starting repertoires vary by band and ecology, not presumed innate differences between language families.
 
+## Residential size and camp fission
+
+**A residential camp is not an entire language community or marriage network.** A few dozen co-residents are a useful baseline for mobile foragers, with substantial ecological and seasonal variation. There is no universal biological maximum of 50 or 150 people.
+
+- [Ember, Heitmann & Wang Gaouette (2025), HRAF, *Hunter-Gatherers (Foragers)*](https://hraf.yale.edu/ehc/summaries/hunter-gatherers) summarizes mobile camps averaging about four families / 20 people (drawing on Hamilton et al. 2007). It also documents larger, sedentary or seasonally sedentary fishing communities, including New Guinea settlements exceeding 1,000. Thus 1,000 is not impossible for all foragers, but is inappropriate as an ordinary mobile residential band in this prototype.
+- [Hill et al. (2011), *Co-Residence Patterns in Hunter-Gatherer Societies Show Unique Human Social Structure*](https://doi.org/10.1126/science.1199071) samples 32 foraging societies, 5,067 people, and reports mean **experienced band size of 28.2 adults**. This is an adult-only, experienced-size measure, not an all-age mean of 28 people. Flexible residence and unrelated co-residents caution against modelling every band as one immutable extended family.
+- [Hamilton et al. (2007), *The complex structure of hunter-gatherer social networks*](https://doi.org/10.1098/rspb.2007.0564) distinguishes nested household, residential and wider social scales. Shared culture can persist across many separate camps.
+- [Hamilton, Buchanan & Walker (2018), *Scaling the Size, Structure, and Dynamics of Residentially Mobile Hunter-Gatherer Camps*](https://doi.org/10.1017/aaq.2018.39), and HRAF's synthesis, inform flexible camp organization and increased spacing in larger camps. These ethnographic analogies do not establish exact prehistoric census sizes or splitting rules.
+
+The simulation has three **invented, inherited residential customs**, not named Earth cultures. All numbers below are explicit modelling choices, informed by the scale of camps rather than measured cultural laws:
+
+| Custom | Normal pressure threshold (all ages) | Response to sustained crowding |
+|---|---:|---|
+| Small-camp dispersal | 40 | After 14 pressure days, a small party (half the threshold) leaves |
+| Balanced camp fission | 70 | After 28 pressure days, split into approximately equal camps |
+| River-camp budding | 100 | After 45 pressure days, a smaller offshoot leaves while the larger parent remains |
+
+River budding tolerates 150 only with fishing proficiency ≥30%, preservation ≥25%, ≥8 stored food-days/person, and accessible non-ocean aquatic biomass ≥30 food-days/person. Low stores (<3 days/person) or health (<65%) lower thresholds by a quarter. Pressure recedes by two days/day below the threshold. Camps above twice their current threshold split immediately and repeatedly as necessary; this also resolves oversized old-save bands on the next simulated day. This is a mobile-camp safeguard, not a claim that settlements or gatherings cannot be larger.
+
+New camps begin at roughly half to five-sixths of their customary threshold, independent of global population. Waterside habitats bias, but do not dictate, river-budding customs. Splinters inherit the custom, languages and cohort proficiency; every sex/age cohort and all carried food/materials/boat capacity are apportioned conservatively. Parentage and unique IDs persist. Population, births and deaths do not change through fission. Two camps initially occupy the same coarse map cell and subsequently migrate with ordinary travel costs.
+
+Household membership and pedigrees are not represented: proportional cohorts approximate a mixed-age residential party, not a literal reconstruction of kinship. Residential customs transmit through descent at fission and cultural identity change; inter-band teaching transmits practical skills. Temporary camp fusion and large seasonal assemblies remain future mechanics.
+
+## Cultural identities and remembered places
+
+The five starting variants and every residential/social tuning parameter live in [`humanity-cultures`](pkgs/humanity-cultures/README.md). A **variant** is a subsistence/residence strategy; a **culture identity** is a named, historically connected group of bands. They are distinct from language families. Isolation creates one-parent branches; repeated friendly contact can create two-parent mixed identities. The 3-year isolation and 60-contact-day mixing thresholds compress cultural change for observation and are not measured ethnographic identity-change rates.
+
+Fishing-resident cultures establish remembered fishing settlements; seasonal-round cultures maintain camps associated with local seasons. This draws on HRAF's account of sedentary and seasonally sedentary fishing societies and [Robinson (2007), *Hunter-fisher-gatherer territoriality*, Internet Archaeology 22](https://intarch.ac.uk/journal/issue22/4/2_1.html). Robinson discusses Jordan's Khanty ethnography: multi-household spring/summer riverside bases, dispersed autumn/winter forest residences, and procurement locales inherited across generations. These contemporary/historical analogies illustrate possible mechanisms, not a universal prehistoric seasonal calendar or a claim that those societies were unchanged since the Pleistocene.
+
+After 20 residence days with sufficient provisions, eligible bands remember a site. Fishing sites additionally require real aquatic stocks and fishing knowledge. Movement gains cultural attachment/seasonal-return preferences while retaining normal travel and subsistence constraints. Sites preserve name, cell, culture, founder and visit history through absence and fission; they disappear only when neither founder nor owning culture survives. Multiple bands may inhabit the same location. No buildings, exclusive territorial rights, site storage, individual households or automatic band fusion are inferred from a marker.
+
 ## Inspection and boundaries
 
 Select a cell and **scroll field notes** for stocks, wildlife species, carried materials, boat capacity, languages, cohort proficiencies and prey familiarity. `Tab` cycles biome, temperature, land food, aquatic biomass and craft materials. Materials map stone to red, wood to green and fiber to blue. Cyan fish symbols mark productive aquatic cells at close zoom.

@@ -2,6 +2,38 @@
 use crate::{Biome, Cell, Species};
 use serde::{Deserialize, Serialize};
 
+pub use humanity_cultures::{CampTradition, CultureVariant, Residence, SOCIAL};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Culture {
+    /// Stable index in World::cultures. Extinct identities remain as ancestry.
+    pub id: u32,
+    pub name: String,
+    pub variant: CultureVariant,
+    pub parents: Vec<u32>,
+    pub founded: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SiteKind {
+    FishingSettlement,
+    SeasonalCamp,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CulturalSite {
+    pub id: u64,
+    pub name: String,
+    pub cell: crate::CellId,
+    pub culture: u32,
+    pub founder_band: u32,
+    pub kind: SiteKind,
+    /// Local season (southern seasons are shifted by half a year).
+    pub season: u32,
+    pub founded: u64,
+    pub last_visited: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(usize)]
 pub enum Skill {

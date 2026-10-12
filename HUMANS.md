@@ -1,6 +1,6 @@
 # Humanity — first playable simulation
 
-A procedural hunter-gatherer world. You observe autonomous bands and migrating wildlife; there are no settlements or player orders yet.
+A procedural hunter-gatherer world. Observe autonomous bands, living cultures, fishing settlements, seasonal camps and migrating wildlife.
 
 ## Start the game
 
@@ -71,7 +71,9 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v3:** knowledge, equipment, aquatic stocks and material resources persist. Spherical v2 saves upgrade deterministically on load: existing people, geography, events and RNG are preserved, new resources and starting repertoires are initialized. Their future trajectory changes under the new rules. Cylindrical v1 saves still require a new planet. Geometry is rebuilt from resolution rather than duplicated in JSON.
+**Save format v4:** also persists residential customs, crowding pressure, parent bands and the next unique band ID. Spherical v2/v3 saves upgrade deterministically on load, preserving people and RNG. Oversized bands split when simulation resumes. V2 also initializes knowledge and subsistence resources. Future trajectories change under the new rules. Cylindrical v1 saves require a new planet. Geometry is rebuilt from resolution rather than duplicated in JSON.
+
+V4 also stores cultural identities/ancestry, isolation/contact memory and named cultural locations. A location persists while its founding band or owning culture survives, including when temporarily unoccupied.
 
 ### Wildlife, fishing and cultures
 
@@ -80,6 +82,12 @@ Six migrating land-animal types have distinct habitat preferences, reproductive 
 Thirteen practical traditions spread through adult/elder teaching, children's apprenticeship, local experimentation and peaceful inter-band contact. Shared language makes transmission more likely; demonstration can occasionally cross language barriers. Boats require both knowledge and enough material-built passenger capacity; they enable short water crossings and faster river travel.
 
 Select a cell and scroll the field-notes panel to inspect all of this. The aquatic overlay shows fish/shellfish biomass; the material overlay maps stone to red, wood to green and fiber to blue. `--inspect` includes species counts, adult knowledge, fishing totals, innovations, knowledge transfers and boat journeys.
+
+Bands inherit one of three residential customs: **small-camp dispersal**, **balanced fission**, or **river-camp budding**. Sustained crowding produces differently sized offshoots, conserving people, supplies and knowledge. Normal thresholds are 40/70/100 people; well-provisioned fishing camps can tolerate 150, while scarcity lowers thresholds. Initial sizes no longer grow with global population. Field notes show the current threshold, pressure and parent band; chronicles record splits. Headless summaries include band sizes, custom counts and `band_fissions`. Multiple camps can share a map cell and then migrate independently. See the research and exact assumptions below.
+
+Bands belong to shared **culture identities**. Three years of same-culture isolation can create a daughter culture; sustained peaceful contact can create a two-parent mixed culture. Five starting variants include **fishing residents** and **seasonal rounds**. These establish named fishing settlements and seasonal locations after sustained residence. Secure bands favor returning to remembered cultural sites in the appropriate local season; hunger can override attachment. Cyan houses and violet tents mark these sites on the globe; click their cell for owner, season and visit history.
+
+**Inspect and tune the current game rules:** [`pkgs/humanity-cultures/README.md`](pkgs/humanity-cultures/README.md) describes all variants and parameters; [`src/lib.rs`](pkgs/humanity-cultures/src/lib.rs) contains the editable tables. `--inspect` includes actual living identities, variants, ancestry and locations. Saved `cultures` also retain extinct ancestors.
 
 See [PREHISTORY.md](PREHISTORY.md) for archaeological examples, sources, exact mechanisms and modelling boundaries.
 
@@ -144,6 +152,7 @@ cargo run -p humanity-cli -- \
 |---|---|
 | `humanity-grid` | Geodesic topology, spherical geometry, areas, neighbor queries and picking |
 | `humanity-core` | Compact state, units, serializable deterministic RNG |
+| `humanity-cultures` | Tunable cultural variant registry, camp customs, social and site parameters |
 | `humanity-world` | Periodic terrain, acyclic drainage/lakes, biomes, daily weather, renewable ecology, initial seeding |
 | `humanity-sim` | Daily phases, sparse spatial indexes, herd/tribe decisions, hunting, contact, demography |
 | `humanity-save` | Snapshot validation, atomic persistence, inspection summaries |
@@ -152,4 +161,4 @@ cargo run -p humanity-cli -- \
 
 Daily work is linear in cells plus spatially indexed aggregate agents; local encounters are sampled with bounded work rather than all-pairs comparisons. No entity per person or terrain cell. The grid's immutable geometry is shared on clone. Rendering keeps a bounded coarse globe and traverses only a spherical cap for detailed nearby terrain, batching it into meshes. Billboard icons use depth testing and horizon culling. The viewer budgets simulation steps per frame; requested speed may exceed achievable speed on very large worlds. Simulation is single-threaded for deterministic ordering; same-build save/resume is tested byte-for-byte equivalent at the state level.
 
-Prototype approximations: climate and demography are stylized, not scientific forecasts. Seas are shallow ocean margins. River channels use accumulated climatological catchments, not daily fluid simulation. Cell plants, fruit/seeds, small game and grazing are aggregate stocks; herds are reindeer, bison or antelope. Language families mix through peaceful contact. Demography uses female/male child/adult/elder cohorts, with derived labor roles. Events resolve using stored probabilities; conflict events record the winner's combat probability. No boats, farming, settlements, band fission, individual genealogy, or historical language naming yet.
+Prototype approximations: climate and demography are stylized, not scientific forecasts. Seas are shallow ocean margins. River channels use accumulated climatological catchments, not daily fluid simulation. Cell plants, fruit/seeds, small game and grazing are aggregate stocks. Language families mix through peaceful contact. Demography uses female/male child/adult/elder cohorts, with derived labor roles. Events resolve using stored probabilities; conflict events record the winner's combat probability. Fishing settlements are remembered residence locations, without buildings or separate storage. No farming, camp fusion, individual genealogy, or historical language naming yet.

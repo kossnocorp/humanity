@@ -2431,7 +2431,15 @@ dependencies = [
 name = "humanity-core"
 version = "0.1.0"
 dependencies = [
+ "humanity-cultures",
  "humanity-grid",
+ "serde",
+]
+
+[[package]]
+name = "humanity-cultures"
+version = "0.1.0"
+dependencies = [
  "serde",
 ]
 

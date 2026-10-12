@@ -6,7 +6,7 @@ pub use culture::*;
 pub use insights::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 3;
+pub const SAVE_VERSION: u32 = 4;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -274,6 +274,26 @@ pub struct Tribe {
     /// Today's fraction of food-working time assigned to aquatic foraging.
     #[serde(default)]
     pub fishing_effort: f32,
+    #[serde(default)]
+    pub camp_tradition: CampTradition,
+    #[serde(default)]
+    pub camp_pressure_days: u32,
+    #[serde(default)]
+    pub parent_band: Option<u32>,
+    #[serde(default)]
+    pub culture: u32,
+    #[serde(default)]
+    pub isolation_days: u32,
+    #[serde(default)]
+    pub last_cultural_contact: u64,
+    #[serde(default)]
+    pub contact_culture: Option<u32>,
+    #[serde(default)]
+    pub contact_days: u32,
+    #[serde(default)]
+    pub last_foreign_contact: u64,
+    #[serde(default)]
+    pub residence_days: u32,
 }
 impl Tribe {
     pub fn headcount(&self) -> u32 {
@@ -307,6 +327,10 @@ pub enum EventKind {
     Innovation,
     KnowledgeExchange,
     WaterCrossing,
+    BandFission,
+    CultureDivergence,
+    CultureMixing,
+    SiteFounded,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -338,6 +362,14 @@ pub struct Totals {
     pub knowledge_exchanges: u64,
     #[serde(default)]
     pub water_crossings: u64,
+    #[serde(default)]
+    pub band_fissions: u64,
+    #[serde(default)]
+    pub culture_divergences: u64,
+    #[serde(default)]
+    pub culture_mixtures: u64,
+    #[serde(default)]
+    pub sites_founded: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -350,6 +382,15 @@ pub struct World {
     pub cells: Vec<Cell>,
     pub herds: Vec<Herd>,
     pub tribes: Vec<Tribe>,
+    /// Monotonic IDs are never reused, even after a band dies out.
+    #[serde(default)]
+    pub next_band_id: u64,
+    #[serde(default)]
+    pub cultures: Vec<Culture>,
+    #[serde(default)]
+    pub sites: Vec<CulturalSite>,
+    #[serde(default)]
+    pub next_site_id: u64,
     /// Bounded recent history; lifetime counters remain in totals.
     pub events: std::collections::VecDeque<Event>,
     pub totals: Totals,
@@ -357,6 +398,37 @@ pub struct World {
     pub insights: PopulationInsights,
 }
 impl World {
+    /// A modelling threshold for mobile residential camps, not a biological cap.
+    pub fn camp_limit(&self, t: &Tribe) -> u32 {
+        let n = t.headcount().max(1) as f32;
+        let mut limit = t.camp_tradition.normal_limit();
+        if t.camp_tradition == CampTradition::RiverBudding
+            && t.knowledge.level(Skill::Fishing) >= SOCIAL.rich_fishing
+            && t.knowledge.level(Skill::Preservation) >= SOCIAL.rich_preservation
+            && t.food / n >= SOCIAL.rich_food_days
+        {
+            let aquatic: f32 = std::iter::once(t.cell)
+                .chain(self.grid.neighbors(t.cell))
+                .map(|id| &self.cells[id as usize])
+                .filter(|c| c.biome != Biome::Ocean)
+                .map(|c| c.resources.aquatic.total() * (1. - c.weather.snow * 0.9))
+                .sum();
+            if aquatic >= n * SOCIAL.rich_aquatic_days {
+                limit = SOCIAL.rich_camp_limit;
+            }
+        }
+        if t.food / n < SOCIAL.scarce_food_days || t.health < SOCIAL.scarce_health {
+            limit = (limit as f32 * SOCIAL.scarce_limit_fraction) as u32;
+        }
+        limit
+    }
+
+    pub fn local_season(&self, cell: CellId) -> u32 {
+        ((self.day / u64::from(self.config.season_days)
+            + if self.grid.latitude(cell) < 0. { 2 } else { 0 })
+            % 4) as u32
+    }
+
     pub fn population(&self) -> u64 {
         self.tribes.iter().map(|t| u64::from(t.headcount())).sum()
     }
