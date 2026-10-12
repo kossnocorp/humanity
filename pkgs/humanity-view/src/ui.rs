@@ -1,5 +1,12 @@
 use crate::*;
-use humanity_core::EventKind;
+use bevy::{
+    input::mouse::{MouseScrollUnit, MouseWheel},
+    window::PrimaryWindow,
+};
+use humanity_core::{EventKind, Skill, Species};
+
+#[derive(Component)]
+pub struct FieldNotes;
 
 #[derive(Component)]
 pub enum Hud {
@@ -61,12 +68,12 @@ pub fn setup(mut commands: Commands) {
                 TextColor(INK),
             ));
         });
-    commands.spawn((Node { position_type: PositionType::Absolute, right: px(20), top: px(110), bottom: px(72),
+    commands.spawn((FieldNotes, ScrollPosition::default(), Node { position_type: PositionType::Absolute, right: px(20), top: px(110), bottom: px(72),
         width: px(310), padding: UiRect::all(px(20)), flex_direction: FlexDirection::Column,
-        row_gap: px(15), overflow: Overflow::clip(), ..default() },
+        row_gap: px(15), overflow: Overflow::scroll_y(), ..default() },
         BackgroundColor(Color::srgba(0.045, 0.075, 0.09, 0.96))))
         .with_children(|p| {
-            p.spawn((Text::new("F I E L D   N O T E S"), TextFont { font_size: 17., ..default() }, TextColor(GOLD)));
+            p.spawn((Text::new("FIELD NOTES / scroll for culture"), TextFont { font_size: 15., ..default() }, TextColor(GOLD)));
             p.spawn((Hud::Notes, Text::default(), TextFont { font_size: 14., ..default() }, TextColor(INK)));
             p.spawn((Text::new("RECENT ENCOUNTERS"), TextFont { font_size: 12., ..default() }, TextColor(GOLD)));
             p.spawn((Hud::Chronicle, Text::default(), TextFont { font_size: 12., ..default() }, TextColor(MUTED)));
@@ -159,7 +166,22 @@ pub fn update(
                     c.resources.grazing,
                     animals
                 );
-                if let Some(t) = people.first() {
+                let r = &c.resources;
+                body.push_str(&format!("\nAQUATIC FOOD (person-days)\nFreshwater fish {:.0}\nCoastal / pelagic fish {:.0}\nShellfish {:.0}\n\nCRAFT MATERIALS\nWood {:.0} / Fiber {:.0}\nToolstone availability {:.0}%\n",
+                    r.aquatic.freshwater_fish, r.aquatic.coastal_fish, r.aquatic.shellfish, r.wood, r.fiber, r.toolstone*100.));
+                for h in w.herds.iter().filter(|h| h.cell == id) {
+                    body.push_str(&format!(
+                        "{:?}: {} / condition {:.0}%\n",
+                        h.species,
+                        h.animals,
+                        h.condition * 100.
+                    ));
+                }
+                if let Some(t) = people
+                    .iter()
+                    .find(|t| Some(t.id) == view.following)
+                    .or(people.first())
+                {
                     let languages = t
                         .languages
                         .iter()
@@ -172,6 +194,26 @@ pub fn update(
                         t.id, t.headcount(), t.health * 100., t.food / t.headcount().max(1) as f32,
                         t.people.female.iter().sum::<u32>(), t.people.male.iter().sum::<u32>(), children, t.people.adults(), elders,
                         t.specialists.hunters, t.specialists.gatherers, t.specialists.healers, t.specialists.guides, languages, people.len()));
+                    body.push_str(&format!("\n\nLIVELIHOOD / KNOWLEDGE\nFishing effort today {:.0}%\nBoat places {:.0} / {} people\nCarried wood {:.0} / fiber {:.0}\nStone {:.0} / hides {:.0}\n\nProficient: child / adult / elder\n",
+                        t.fishing_effort*100., t.equipment.boat_places,t.headcount(),t.equipment.wood,t.equipment.fiber,t.equipment.stone,t.equipment.hides));
+                    for skill in Skill::ALL {
+                        let k = t.knowledge.practitioners[skill as usize];
+                        body.push_str(&format!(
+                            "{}\n  {:.0}% / {:.0}% / {:.0}%\n",
+                            skill.label(),
+                            k[0] * 100.,
+                            k[1] * 100.,
+                            k[2] * 100.
+                        ));
+                    }
+                    body.push_str("\nHUNTING FAMILIARITY\n");
+                    for species in Species::ALL {
+                        body.push_str(&format!(
+                            "{:?}: {:.0}%\n",
+                            species,
+                            t.knowledge.prey[species.index()] * 100.
+                        ));
+                    }
                 } else {
                     body.push_str("\nNo human band here.\nF follows the next band.");
                 }
@@ -191,6 +233,10 @@ pub fn update(
                             | EventKind::Conflict
                             | EventKind::Exchange
                             | EventKind::Extinction
+                            | EventKind::KnowledgeExchange
+                            | EventKind::Innovation
+                            | EventKind::WaterCrossing
+                            | EventKind::Fishing
                     )
                 })
                 .take(4)
@@ -199,6 +245,20 @@ pub fn update(
                         EventKind::Hunt => format!("hunted {}", e.amount),
                         EventKind::Conflict => format!("conflict: {} lost", e.amount),
                         EventKind::Exchange => "peaceful exchange".into(),
+                        EventKind::KnowledgeExchange => format!(
+                            "shared {}",
+                            Skill::ALL
+                                .get(e.amount as usize)
+                                .map_or("knowledge", |s| s.label())
+                        ),
+                        EventKind::Innovation => format!(
+                            "experiment: {}",
+                            Skill::ALL
+                                .get(e.amount as usize)
+                                .map_or("knowledge", |s| s.label())
+                        ),
+                        EventKind::WaterCrossing => "crossed water by boat".into(),
+                        EventKind::Fishing => format!("fished {} food-days", e.amount),
                         _ => "band lost".into(),
                     };
                     format!("Day {} / Band {} / {}", e.day, e.tribe, action)
@@ -217,6 +277,30 @@ pub fn update(
             } else {
                 view.status.clone()
             };
+        }
+    }
+}
+
+pub fn scroll(
+    mut wheel: MessageReader<MouseWheel>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    view: Res<ViewState>,
+    mut panels: Query<&mut ScrollPosition, With<FieldNotes>>,
+) {
+    for e in wheel.read() {
+        if view.insights_open
+            || !window.cursor_position().is_some_and(|p| {
+                p.x > window.width() - 350. && p.y > 100. && p.y < window.height() - 72.
+            })
+        {
+            continue;
+        }
+        let delta = match e.unit {
+            MouseScrollUnit::Line => e.y * 40.,
+            MouseScrollUnit::Pixel => e.y,
+        };
+        for mut pos in &mut panels {
+            pos.0.y = (pos.0.y - delta).max(0.);
         }
     }
 }

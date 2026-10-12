@@ -43,13 +43,18 @@ pub fn load(path: impl AsRef<Path>) -> Result<World> {
     let header: Header =
         serde_json::from_reader(&mut reader).context("reading snapshot version")?;
     ensure!(
-        header.version == SAVE_VERSION,
+        header.version == SAVE_VERSION || header.version == 2,
         "unsupported save version {} (expected {SAVE_VERSION}); cylindrical v1 worlds cannot be resumed on a spherical grid; generate a new planet",
         header.version
     );
     reader.seek(SeekFrom::Start(0))?;
     let mut world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
+    let upgrade = world.version == 2;
+    world.version = SAVE_VERSION;
     validate(&world).context("invalid snapshot")?;
+    if upgrade {
+        humanity_world::upgrade_subsistence(&mut world);
+    }
     if world.insights.since_day.is_none() {
         world.record_population();
     }
@@ -91,11 +96,20 @@ pub fn validate(w: &World) -> Result<()> {
                 c.resources.plants,
                 c.resources.fruit,
                 c.resources.game,
-                c.resources.grazing
+                c.resources.grazing,
+                c.resources.aquatic.freshwater_fish,
+                c.resources.aquatic.coastal_fish,
+                c.resources.aquatic.shellfish,
+                c.resources.wood,
+                c.resources.fiber,
             ]
             .into_iter()
             .all(stock),
             "invalid resources at cell {i}"
+        );
+        ensure!(
+            finite_range(c.resources.toolstone, 0., 1.),
+            "invalid toolstone at cell {i}"
         );
         if let Some(downstream) = c.drainage {
             ensure!(
@@ -173,6 +187,30 @@ pub fn validate(w: &World) -> Result<()> {
         );
         let s = &t.specialists;
         ensure!(
+            t.knowledge
+                .practitioners
+                .iter()
+                .flatten()
+                .chain(&t.knowledge.prey)
+                .all(|&x| finite_range(x, 0., 1.)),
+            "invalid knowledge in band {}",
+            t.id
+        );
+        ensure!(
+            [
+                t.equipment.wood,
+                t.equipment.fiber,
+                t.equipment.stone,
+                t.equipment.hides,
+                t.equipment.boat_places
+            ]
+            .into_iter()
+            .all(stock)
+                && finite_range(t.fishing_effort, 0., 1.),
+            "invalid equipment in band {}",
+            t.id
+        );
+        ensure!(
             u64::from(s.hunters)
                 + u64::from(s.gatherers)
                 + u64::from(s.healers)
@@ -197,6 +235,12 @@ pub fn validate(w: &World) -> Result<()> {
         );
     }
     for e in &w.events {
+        if matches!(e.kind, EventKind::Innovation | EventKind::KnowledgeExchange) {
+            ensure!(
+                (e.amount as usize) < Skill::ALL.len(),
+                "invalid knowledge event topic"
+            );
+        }
         ensure!(
             e.day <= w.day
                 && (e.cell as usize) < w.cells.len()
@@ -205,7 +249,10 @@ pub fn validate(w: &World) -> Result<()> {
         );
     }
     ensure!(
-        w.totals.gathered.is_finite() && w.totals.gathered >= 0.,
+        w.totals.gathered.is_finite()
+            && w.totals.gathered >= 0.
+            && w.totals.fished.is_finite()
+            && w.totals.fished >= 0.,
         "invalid cumulative gathering"
     );
     let accounted = u64::from(w.config.population)
@@ -323,7 +370,40 @@ pub fn summary(w: &World) -> serde_json::Value {
         snow += u64::from(c.weather.snow > 0.2);
         rivers += u64::from(c.river > 0.);
     }
+    let wildlife: std::collections::BTreeMap<_, _> = Species::ALL
+        .into_iter()
+        .map(|s| {
+            (
+                format!("{s:?}"),
+                w.herds
+                    .iter()
+                    .filter(|h| h.species == s)
+                    .map(|h| u64::from(h.animals))
+                    .sum::<u64>(),
+            )
+        })
+        .collect();
+    let knowledge: std::collections::BTreeMap<_, _> = Skill::ALL
+        .into_iter()
+        .map(|s| {
+            (
+                format!("{s:?}"),
+                w.tribes
+                    .iter()
+                    .map(|t| f64::from(t.knowledge.level(s)) * f64::from(t.people.adults()))
+                    .sum::<f64>()
+                    / w.tribes
+                        .iter()
+                        .map(|t| u64::from(t.people.adults()))
+                        .sum::<u64>()
+                        .max(1) as f64,
+            )
+        })
+        .collect();
     serde_json::json!({
+        "wildlife":wildlife, "adult_knowledge":knowledge,
+        "aquatic_food":w.cells.iter().map(|c|f64::from(c.resources.aquatic.total())).sum::<f64>(),
+        "boat_places":w.tribes.iter().map(|t|f64::from(t.equipment.boat_places)).sum::<f64>(),
         "day": w.day, "year": w.day / u64::from(w.config.year_days()) + 1,
         "cells": w.grid.len(), "pentagons": 12, "radius_km": w.config.radius_km(),
         "northern_season": w.season(), "population": w.population(), "tribes": w.tribes.len(),
@@ -351,6 +431,50 @@ mod tests {
             seed: 42,
         })
         .unwrap()
+    }
+    #[test]
+    fn spherical_v2_upgrade_preserves_existing_state_and_runs_only_once() {
+        let original = world();
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["version"] = 2.into();
+        for c in value["cells"].as_array_mut().unwrap() {
+            for field in ["aquatic", "wood", "fiber", "toolstone"] {
+                c["resources"].as_object_mut().unwrap().remove(field);
+            }
+        }
+        for t in value["tribes"].as_array_mut().unwrap() {
+            for field in ["knowledge", "equipment", "fishing_effort"] {
+                t.as_object_mut().unwrap().remove(field);
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old-sphere.json");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let mut upgraded = load(&path).unwrap();
+        assert_eq!(upgraded.rng.state, original.rng.state);
+        assert_eq!(upgraded.population(), original.population());
+        assert_eq!(upgraded.day, original.day);
+        assert_eq!(
+            upgraded.cells[10].resources.plants,
+            original.cells[10].resources.plants
+        );
+        assert!(upgraded.tribes[0].knowledge.level(Skill::Knapping) > 0.);
+        assert!(
+            upgraded
+                .cells
+                .iter()
+                .any(|c| c.resources.aquatic.total() > 0.)
+        );
+        upgraded.tribes[0].knowledge = Knowledge::default();
+        save(&upgraded, &path).unwrap();
+        let reloaded = load(&path).unwrap();
+        assert_eq!(reloaded.tribes[0].knowledge.level(Skill::Knapping), 0.);
+        assert_eq!(
+            serde_json::to_string(&upgraded).unwrap(),
+            serde_json::to_string(&reloaded).unwrap()
+        );
+        upgraded.tribes[0].knowledge.practitioners[0][1] = 1.1;
+        assert!(validate(&upgraded).is_err());
     }
     #[test]
     fn atomic_save_resume_and_bad_state_rejection() {

@@ -52,6 +52,14 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
                     fruit: 0.,
                     game: 0.,
                     grazing: 0.,
+                    aquatic: AquaticLife::default(),
+                    wood: 0.,
+                    fiber: 0.,
+                    toolstone: {
+                        let p = grid.direction(i as u32).as_dvec3();
+                        ((noise.get([p.x * 9. + 7., p.y * 9., p.z * 9.]) as f32 + 0.2) * 1.4)
+                            .clamp(0., 1.)
+                    },
                 },
             }
         })
@@ -188,11 +196,13 @@ pub fn update_environment(world: &mut World, initialize: bool) {
             + if cell.river > 0. { 0.007 } else { 0. }
             - (0.003 + t.max(0.) * 0.00025))
             .clamp(0.02, 1.);
+        renew_subsistence(cell, area * world.grid.area_factor(id as u32), initialize);
         if cell.biome.water() {
             continue;
         }
         let warmth = ((t + 8.) / 25.).clamp(0.02, 1.) * ((55. - t) / 15.).clamp(0.05, 1.);
-        let growing = warmth * (0.25 + w.soil_moisture * 0.75) * (1. - w.snow * 0.9);
+        let growing =
+            warmth * (0.25 + cell.weather.soil_moisture * 0.75) * (1. - cell.weather.snow * 0.9);
         let capacity = cell.biome.fertility() * area * world.grid.area_factor(id as u32);
         let fruiting = ((t - 8.) / 16.).clamp(0., 1.);
         let targets = [
@@ -243,18 +253,32 @@ fn populate(world: &mut World) -> Result<(), String> {
         {
             continue;
         }
-        let species = if cell.weather.temperature < 7. {
+        let species = if cell.elevation > 1400 {
+            Species::Ibex
+        } else if matches!(cell.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
+            if world.rng.chance(0.55) {
+                Species::Deer
+            } else {
+                Species::Boar
+            }
+        } else if cell.weather.temperature < 7. {
             Species::Reindeer
         } else if cell.weather.temperature > 22. {
             Species::Antelope
         } else {
             Species::Bison
         };
+        let (minimum, spread) = match species {
+            Species::Boar => (8, 32),
+            Species::Ibex => (12, 45),
+            Species::Deer => (15, 85),
+            _ => (40, 140),
+        };
         world.herds.push(Herd {
             id: world.herds.len() as u32,
             cell: id,
             species,
-            animals: 40 + world.rng.index(140) as u32,
+            animals: minimum + world.rng.index(spread) as u32,
             condition: 0.85,
             travel: 0.,
         });
@@ -297,9 +321,127 @@ fn populate(world: &mut World) -> Result<(), String> {
             health: 1.,
             travel: 0.,
             hunting_skill: 0.35 + world.rng.unit() * 0.35,
+            knowledge: initial_knowledge(world, id, world.tribes.len() as u32),
+            equipment: Equipment::default(),
+            fishing_effort: 0.,
         });
     }
     Ok(())
+}
+
+/// Also used for v2 upgrades; a separate seed avoids changing gameplay RNG.
+pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
+    let c = &world.cells[cell as usize];
+    let water = c.river > 0.
+        || world
+            .grid
+            .neighbors(cell)
+            .any(|n| world.cells[n as usize].biome.water());
+    let mut rng = Rng::new(world.config.seed ^ u64::from(band).wrapping_mul(0x9e3779b97f4a7c15));
+    let mut k = Knowledge::default();
+    for skill in [
+        Skill::Knapping,
+        Skill::Tracking,
+        Skill::PlantProcessing,
+        Skill::OralTradition,
+        Skill::Healing,
+    ] {
+        k.seed(skill, 0.2 + rng.unit() * 0.5);
+    }
+    k.seed(Skill::Cordage, 0.15 + rng.unit() * 0.5);
+    for skill in [
+        Skill::Trapping,
+        Skill::DriveHunting,
+        Skill::Preservation,
+        Skill::Clothing,
+    ] {
+        if rng.chance(0.65) {
+            k.seed(skill, 0.15 + rng.unit() * 0.45);
+        }
+    }
+    if c.weather.temperature < 8. {
+        k.seed(Skill::Clothing, 0.65);
+    }
+    if water {
+        k.seed(Skill::Fishing, 0.3 + rng.unit() * 0.4);
+        if rng.chance(0.65) {
+            k.seed(Skill::Watercraft, 0.3 + rng.unit() * 0.4);
+            k.seed(Skill::Navigation, 0.15 + rng.unit() * 0.4);
+        }
+    }
+    for species in Species::ALL {
+        k.prey[species.index()] = (0.15 + species.habitat(c) * 0.015).clamp(0.02, 0.5);
+    }
+    k
+}
+
+/// Aquatic biomass and craft plants renew independently of terrestrial food.
+pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
+    let t = cell.weather.temperature;
+    let productivity = ((t + 12.) / 25.).clamp(0.08, 1.) * ((48. - t) / 15.).clamp(0.05, 1.);
+    let fresh = if cell.biome == Biome::Lake {
+        1.
+    } else {
+        (cell.river / 30.).min(1.)
+    };
+    let coast = match cell.biome {
+        Biome::Sea => 1.,
+        Biome::Ocean => 0.12,
+        _ => 0.,
+    };
+    let forest = if matches!(cell.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
+        1.
+    } else {
+        cell.biome.fertility() * 0.2
+    };
+    let r = &mut cell.resources;
+    for (stock, capacity, rate) in [
+        (
+            &mut r.aquatic.freshwater_fish,
+            fresh * 5000. * productivity,
+            0.012,
+        ),
+        (
+            &mut r.aquatic.coastal_fish,
+            coast * 7000. * productivity,
+            0.009,
+        ),
+        (
+            &mut r.aquatic.shellfish,
+            if cell.biome == Biome::Sea {
+                2500. * productivity
+            } else {
+                fresh * 400. * productivity
+            },
+            0.006,
+        ),
+        (&mut r.wood, forest * 2500., 0.002),
+        (
+            &mut r.fiber,
+            (cell.biome.fertility() + fresh * 0.5) * 1000.,
+            0.02,
+        ),
+    ] {
+        let target = area * capacity;
+        *stock = if initialize {
+            target
+        } else {
+            (*stock + (target - *stock) * rate).max(0.)
+        };
+    }
+}
+
+pub fn upgrade_subsistence(world: &mut World) {
+    let area = (world.config.cell_km / 20.).powi(2);
+    for (id, c) in world.cells.iter_mut().enumerate() {
+        renew_subsistence(c, area * world.grid.area_factor(id as u32), true);
+        c.resources.toolstone = Rng::new(world.config.seed ^ id as u64).unit();
+    }
+    for i in 0..world.tribes.len() {
+        let t = &world.tribes[i];
+        let k = initial_knowledge(world, t.cell, t.id);
+        world.tribes[i].knowledge = k;
+    }
 }
 
 #[cfg(test)]

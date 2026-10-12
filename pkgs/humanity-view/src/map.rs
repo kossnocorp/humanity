@@ -22,6 +22,7 @@ pub struct MapMeshes {
     herd: Handle<StandardMaterial>,
     forest: Handle<StandardMaterial>,
     mountain: Handle<StandardMaterial>,
+    fish: Handle<StandardMaterial>,
     coarse: Grid,
     coarse_cells: Vec<u32>,
     revision: u64,
@@ -51,7 +52,7 @@ pub fn orbit_camera(
                 view.dirty = true;
             }
             view.status = format!(
-                "Following band {id} / {} people. F next band; rotate to release.",
+                "Following band {id} / {} people. F next band; Esc unfollow.",
                 tribe.headcount()
             );
         } else {
@@ -196,6 +197,7 @@ pub fn setup(
         herd: icon_material(&icons.herd),
         forest: icon_material(&icons.forest),
         mountain: icon_material(&icons.mountain),
+        fish: icon_material(&icons.fish),
         coarse,
         coarse_cells,
         revision: view.snapshot_revision,
@@ -261,6 +263,17 @@ impl Geometry {
 
 fn color(c: &Cell, layer: Layer) -> [f32; 3] {
     match layer {
+        Layer::Aquatic => {
+            let f = (c.resources.aquatic.total() / 12000.).sqrt().clamp(0., 1.);
+            return [0.06 + f * 0.2, 0.12 + f * 0.65, 0.19 + f * 0.65];
+        }
+        Layer::Materials => {
+            return [
+                0.1 + c.resources.toolstone * 0.65,
+                0.1 + (c.resources.wood / 2500.).clamp(0., 1.) * 0.65,
+                0.1 + (c.resources.fiber / 1000.).clamp(0., 1.) * 0.65,
+            ];
+        }
         Layer::Temperature => {
             let t = ((c.weather.temperature + 25.) / 65.).clamp(0., 1.);
             return [
@@ -435,7 +448,9 @@ pub fn redraw(
             && matches!(view.layer, Layer::Biomes)
             && p.dot(axis) > PLANET_RADIUS / view.distance + 0.015
         {
-            let material = if c.elevation > 1700 {
+            let material = if c.resources.aquatic.total() > 1200. {
+                Some(&handles.fish)
+            } else if c.elevation > 1700 {
                 Some(&handles.mountain)
             } else if matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
                 Some(&handles.forest)

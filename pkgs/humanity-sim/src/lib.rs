@@ -1,6 +1,7 @@
 //! Daily, deterministic aggregate simulation. Sorted sparse spatial indices avoid
 //! all-pairs agent scans and per-cell allocations. Scratch is not persistent state.
 use humanity_core::*;
+mod subsistence;
 
 #[derive(Default)]
 struct SpatialIndex {
@@ -41,6 +42,7 @@ impl Simulation {
         migrate_herds(world);
         self.herds.rebuild(world.herds.iter().map(|h| h.cell));
         self.tribes.rebuild(world.tribes.iter().map(|t| t.cell));
+        subsistence::daily(world);
         self.move_tribes(world);
         self.feed_tribes(world);
         self.tribes.rebuild(world.tribes.iter().map(|t| t.cell));
@@ -54,7 +56,9 @@ impl Simulation {
     fn move_tribes(&self, world: &mut World) {
         let mut events = Vec::new();
         let radius = world.config.radius_km();
-        for tribe in &mut world.tribes {
+        for index in 0..world.tribes.len() {
+            let crossings = subsistence::crossing_candidates(world, &world.tribes[index]);
+            let tribe = &mut world.tribes[index];
             let here = tribe.cell;
             let n = tribe.headcount().max(1) as f32;
             let score = |id: CellId| {
@@ -70,7 +74,21 @@ impl Simulation {
                     .sum();
                 let crowd = self.tribes.at(id).len() as f32;
                 let r = &c.resources;
-                let food = (r.plants + r.fruit + r.game * 0.5) / (n * (1. + crowd * 0.6));
+                let aquatic: f32 = std::iter::once(id)
+                    .chain(world.grid.neighbors(id))
+                    .map(|site| &world.cells[site as usize])
+                    .filter(|c| {
+                        c.biome != Biome::Ocean
+                            || (tribe.equipment.boat_places >= n * 0.25
+                                && tribe.knowledge.level(Skill::Watercraft) >= 0.2)
+                    })
+                    .map(|c| c.resources.aquatic.total() * (1. - c.weather.snow * 0.9))
+                    .sum();
+                let food = (r.plants
+                    + r.fruit
+                    + r.game * 0.5
+                    + aquatic * tribe.knowledge.level(Skill::Fishing))
+                    / (n * (1. + crowd * 0.6));
                 food.min(25.) + (herds as f32 / n * 6.).min(18.) + (r.grazing / 4000.).min(3.)
                     - c.weather.snow * 10.
                     - (c.weather.temperature - 18.).abs() * 0.18
@@ -86,9 +104,20 @@ impl Simulation {
             }
             let mut best = here;
             let mut best_cost = 0.;
+            let mut by_water = false;
             let mut best_score = score(here) + 2.;
             for next in world.grid.neighbors(here) {
-                let cost = world.grid.angular_distance(here, next) * radius;
+                let river_route = world.cells[here as usize].river > 0.
+                    && world.cells[next as usize].river > 0.
+                    && (world.cells[here as usize].drainage == Some(next)
+                        || world.cells[next as usize].drainage == Some(here))
+                    && tribe.equipment.boat_places >= n
+                    && tribe.knowledge.level(Skill::Watercraft) > 0.2
+                    && world.cells[here as usize].weather.snow < 0.5
+                    && world.cells[here as usize].weather.precipitation < 4.;
+                let cost = world.grid.angular_distance(here, next)
+                    * radius
+                    * if river_route { 0.65 } else { 1. };
                 if cost > tribe.travel {
                     continue;
                 }
@@ -97,15 +126,42 @@ impl Simulation {
                     best = next;
                     best_score = s;
                     best_cost = cost;
+                    by_water = river_route;
+                }
+            }
+            for (next, cost) in crossings {
+                let s = score(next) - 2. + world.rng.unit();
+                if s > best_score {
+                    best = next;
+                    best_score = s;
+                    best_cost = cost;
+                    by_water = true;
                 }
             }
             if best != here {
                 tribe.cell = best;
                 tribe.travel -= best_cost;
                 world.totals.migrations += 1;
+                if by_water {
+                    world.totals.water_crossings += 1;
+                    tribe.equipment.boat_places *= 0.96;
+                    // Bad luck costs provisions and health; ensuing mortality
+                    // remains in the existing health/nutrition accounting.
+                    if world
+                        .rng
+                        .chance(0.12 * (1. - tribe.knowledge.level(Skill::Navigation)))
+                    {
+                        tribe.food *= 0.8;
+                        tribe.health *= 0.95;
+                    }
+                }
                 events.push(Event {
                     day: world.day,
-                    kind: EventKind::Migration,
+                    kind: if by_water {
+                        EventKind::WaterCrossing
+                    } else {
+                        EventKind::Migration
+                    },
                     cell: best,
                     tribe: tribe.id,
                     other: None,
@@ -128,13 +184,19 @@ impl Simulation {
             }
             let cell = &mut world.cells[t.cell as usize];
             let access = (1. - cell.weather.snow * 0.8) * (0.35 + 0.65 * t.health);
-            let work = t.specialists.gatherers as f32 * 3.2 * access;
+            let effort = 0.9 * (1. - t.fishing_effort);
+            let hunters = t.specialists.hunters as f32 * effort;
+            let work = t.specialists.gatherers as f32
+                * 3.2
+                * access
+                * effort
+                * (0.75 + t.knowledge.level(Skill::PlantProcessing) * 0.7);
             let fruit = cell.resources.fruit.min(work * 0.55);
             let plants = cell.resources.plants.min(work - fruit);
             let game = cell
                 .resources
                 .game
-                .min(t.specialists.hunters as f32 * 0.7 * access);
+                .min(hunters * (0.5 + t.knowledge.level(Skill::Trapping)) * access);
             cell.resources.fruit -= fruit;
             cell.resources.plants -= plants;
             cell.resources.game -= game;
@@ -162,24 +224,31 @@ impl Simulation {
                 }
                 if let Some(i) = target {
                     let herd = &mut world.herds[i];
-                    let p = (0.2 + t.hunting_skill * 0.5 + t.specialists.hunters as f32 * 0.003
+                    let p = (0.12
+                        + t.hunting_skill * 0.3
+                        + hunters * 0.003
+                        + t.knowledge.level(Skill::Tracking) * 0.15
+                        + t.knowledge.level(Skill::DriveHunting) * 0.15
+                        + t.knowledge.level(Skill::Knapping)
+                            * (t.equipment.stone / n).min(1.)
+                            * 0.1
+                        + t.knowledge.prey[herd.species.index()] * 0.25
+                        - herd.species.difficulty()
                         - cell.weather.snow * 0.15
                         - if herd.cell != t.cell { 0.15 } else { 0. })
                     .clamp(0.05, 0.9);
                     let success = world.rng.chance(p);
                     let kills = if success {
-                        (1 + world.rng.index((t.specialists.hunters / 5).max(1) as usize) as u32)
+                        (1 + world.rng.index((hunters as u32 / 5).max(1) as usize) as u32)
                             .min(herd.animals)
                     } else {
                         0
                     };
                     herd.animals -= kills;
-                    t.food += kills as f32
-                        * match herd.species {
-                            Species::Bison => 100.,
-                            Species::Reindeer => 45.,
-                            Species::Antelope => 35.,
-                        };
+                    t.food += kills as f32 * herd.species.meat();
+                    t.equipment.hides = (t.equipment.hides + kills as f32 * 2.).min(n * 2.);
+                    let familiarity = &mut t.knowledge.prey[herd.species.index()];
+                    *familiarity = (*familiarity + if success { 0.015 } else { 0.003 }).min(1.);
                     t.hunting_skill =
                         (t.hunting_skill + if success { 0.002 } else { 0.0005 }).min(1.);
                     if success {
@@ -203,11 +272,20 @@ impl Simulation {
                     });
                 }
             }
-            let need = n * 0.9 * (1. + (-cell.weather.temperature).max(0.) * 0.006);
+            let clothing = t.knowledge.level(Skill::Clothing) * (t.equipment.hides / n).min(1.);
+            let need = n
+                * 0.9
+                * (1. + (-cell.weather.temperature).max(0.) * 0.006 * (1. - clothing * 0.7));
             let eaten = t.food.min(need);
-            t.food = ((t.food - eaten) * 0.97).min(n * 25.);
+            let preservation = t.knowledge.level(Skill::Preservation)
+                * (0.4 + 0.6 * (t.equipment.wood / (n * 0.02).max(1.)).min(1.));
+            t.equipment.wood = (t.equipment.wood - n * preservation * 0.002).max(0.);
+            t.food = ((t.food - eaten) * (0.97 + preservation * 0.022))
+                .min(n * (20. + t.knowledge.level(Skill::Cordage) * 5. + preservation * 20.));
             let nutrition = eaten / need;
-            let healing = 0.008 + t.specialists.healers as f32 / n * 0.1;
+            let healing = 0.008
+                + t.specialists.healers as f32 / n
+                    * (0.08 + t.knowledge.level(Skill::Healing) * 0.08);
             t.health = (t.health
                 + if nutrition > 0.95 {
                     healing
@@ -295,9 +373,22 @@ impl Simulation {
                     });
                 } else {
                     let a_language = dominant(&ta.languages);
+                    if let Some(skill) = subsistence::exchange(ta, tb, language, &mut world.rng) {
+                        world.totals.knowledge_exchanges += 1;
+                        events.push(Event {
+                            day: world.day,
+                            kind: EventKind::KnowledgeExchange,
+                            cell,
+                            tribe: ta.id,
+                            other: Some(tb.id),
+                            amount: skill as u32,
+                            probability: subsistence::transmission_probability(language),
+                        });
+                    }
                     let b_language = dominant(&tb.languages);
                     learn(&mut ta.languages, b_language);
                     learn(&mut tb.languages, a_language);
+                    subsistence::trade_materials(ta, tb);
                     let a_days = ta.food / ta.headcount() as f32;
                     let b_days = tb.food / tb.headcount() as f32;
                     let (giver, receiver) = if a_days > b_days {
@@ -359,17 +450,13 @@ fn migrate_herds(world: &mut World) {
         if h.animals == 0 {
             continue;
         }
-        let ideal = match h.species {
-            Species::Reindeer => 2.,
-            Species::Bison => 14.,
-            Species::Antelope => 26.,
-        };
+        let ideal = h.species.ideal_temperature();
         let score = |id: CellId| {
             let c = &world.cells[id as usize];
             if c.biome.water() {
                 return f32::NEG_INFINITY;
             }
-            (c.resources.grazing / h.animals as f32).min(70.)
+            (c.resources.grazing / h.animals as f32).min(70.) + h.species.habitat(c)
                 - (c.weather.temperature - ideal).abs() * 1.5
                 - c.weather.snow * 35.
         };
@@ -398,21 +485,23 @@ fn migrate_herds(world: &mut World) {
             }
         }
         let c = &mut world.cells[h.cell as usize];
-        let need = h.animals as f32;
+        let need = h.animals as f32 * h.species.grazing_need();
         let eaten = c.resources.grazing.min(need);
         c.resources.grazing -= eaten;
         h.condition = (h.condition + (eaten / need - 0.85) * 0.08).clamp(0., 1.);
         let annual = world.config.year_days() as f32;
         let breeding = if c.weather.temperature > ideal - 5. && c.weather.temperature < ideal + 12.
         {
-            0.32
+            h.species.annual_breeding()
         } else {
             0.03
         };
-        let births = world.rng.expected(need * breeding * h.condition / annual);
+        let births = world
+            .rng
+            .expected(h.animals as f32 * breeding * h.condition / annual);
         let deaths = world
             .rng
-            .expected(need * (0.09 / annual + (1. - h.condition).powi(3) * 0.025));
+            .expected(h.animals as f32 * (0.09 / annual + (1. - h.condition).powi(3) * 0.025));
         h.animals = h.animals.saturating_add(births).saturating_sub(deaths);
     }
 }
@@ -430,6 +519,10 @@ fn demography(world: &mut World) {
         let girls = world.rng.expected(births as f32 * 0.49).min(births);
         t.people.female[0] += girls;
         t.people.male[0] += births - girls;
+        let children = t.people.female[0] + t.people.male[0];
+        for k in &mut t.knowledge.practitioners {
+            k[0] *= (children - births) as f32 / children.max(1) as f32;
+        }
         let p = 0.018 / year + (1. - t.health).powi(3) * 0.025;
         let mortality = world.rng.expected(t.headcount() as f32 * p);
         let mut deaths = t.people.remove(mortality, &mut world.rng);
@@ -452,6 +545,10 @@ fn demography(world: &mut World) {
             deaths - background,
         );
         let mut aging = 0;
+        let previous_adults = t.people.adults();
+        let previous_elders = t.people.female[2] + t.people.male[2];
+        let mut grown_total = 0;
+        let mut aged_total = 0;
         for cohorts in [&mut t.people.female, &mut t.people.male] {
             let old_deaths = world
                 .rng
@@ -471,6 +568,34 @@ fn demography(world: &mut World) {
             cohorts[0] -= grown;
             cohorts[1] = cohorts[1] + grown - aged;
             cohorts[2] += aged;
+            grown_total += grown;
+            aged_total += aged;
+        }
+        for k in &mut t.knowledge.practitioners {
+            let old = *k;
+            k[1] = (old[1] * (previous_adults - aged_total) as f32 + old[0] * grown_total as f32)
+                / t.people.adults().max(1) as f32;
+            let elders = t.people.female[2] + t.people.male[2];
+            k[2] = (old[2] * (previous_elders - aging) as f32 + old[1] * aged_total as f32)
+                / elders.max(1) as f32;
+            if t.people.female[0] + t.people.male[0] == 0 {
+                k[0] = 0.;
+            }
+            // Small practices can vanish with their last teachers. Large bands
+            // use expected fractions rather than per-person entities.
+            for (level, count) in k.iter_mut().zip([
+                t.people.female[0] + t.people.male[0],
+                t.people.adults(),
+                elders,
+            ]) {
+                *level = level.clamp(0., 1.);
+                if *level * (count as f32) < 1.
+                    && deaths > 0
+                    && world.rng.chance(deaths as f32 / before as f32)
+                {
+                    *level = 0.;
+                }
+            }
         }
         t.specialists = Specialists::from_adults(t.people.adults());
         world

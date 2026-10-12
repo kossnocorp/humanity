@@ -43,11 +43,24 @@ fn climates_and_dense_populations_keep_valid_stocks_and_accounting() {
                 c.resources.fruit,
                 c.resources.game,
                 c.resources.grazing,
+                c.resources.aquatic.freshwater_fish,
+                c.resources.aquatic.coastal_fish,
+                c.resources.aquatic.shellfish,
+                c.resources.wood,
+                c.resources.fiber,
             ] {
                 assert!(stock.is_finite() && stock >= 0.);
             }
         }
         for t in &w.tribes {
+            assert!(
+                t.knowledge
+                    .practitioners
+                    .iter()
+                    .flatten()
+                    .chain(&t.knowledge.prey)
+                    .all(|v| v.is_finite() && (0. ..=1.).contains(v))
+            );
             let s = &t.specialists;
             assert_eq!(
                 s.hunters + s.gatherers + s.healers + s.guides,
@@ -115,5 +128,7 @@ fn wildlife_moves_and_humans_consume_real_cell_stocks() {
         .count();
     assert!(moved > w.herds.len() / 3);
     assert!(w.totals.animals_hunted > 0);
+    assert!(w.totals.fished > 0.);
+    assert!(w.totals.knowledge_exchanges > 0);
     assert!(w.totals.conflicts > 0 && w.totals.exchanges > 0);
 }

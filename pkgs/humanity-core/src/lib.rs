@@ -1,10 +1,12 @@
 //! Compact, renderer-independent state. One cell is an area; people are cohorts.
 use serde::{Deserialize, Serialize};
+mod culture;
 mod insights;
+pub use culture::*;
 pub use insights::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 2;
+pub const SAVE_VERSION: u32 = 3;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,6 +147,15 @@ pub struct Resources {
     pub fruit: f32,
     pub game: f32,
     pub grazing: f32,
+    #[serde(default)]
+    pub aquatic: AquaticLife,
+    #[serde(default)]
+    pub wood: f32,
+    #[serde(default)]
+    pub fiber: f32,
+    /// Accessible toolstone availability, 0..1 (outcrop, not a renewable food).
+    #[serde(default)]
+    pub toolstone: f32,
 }
 impl Resources {
     pub fn edible(&self) -> f32 {
@@ -164,11 +175,15 @@ pub struct Cell {
     pub resources: Resources,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(usize)]
 pub enum Species {
     Reindeer,
     Bison,
     Antelope,
+    Deer,
+    Boar,
+    Ibex,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Herd {
@@ -252,6 +267,13 @@ pub struct Tribe {
     pub health: f32,
     pub travel: f32,
     pub hunting_skill: f32,
+    #[serde(default)]
+    pub knowledge: Knowledge,
+    #[serde(default)]
+    pub equipment: Equipment,
+    /// Today's fraction of food-working time assigned to aquatic foraging.
+    #[serde(default)]
+    pub fishing_effort: f32,
 }
 impl Tribe {
     pub fn headcount(&self) -> u32 {
@@ -281,6 +303,10 @@ pub enum EventKind {
     Birth,
     Death,
     Extinction,
+    Fishing,
+    Innovation,
+    KnowledgeExchange,
+    WaterCrossing,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Event {
@@ -304,6 +330,14 @@ pub struct Totals {
     pub births: u64,
     pub deaths: u64,
     pub gathered: f64,
+    #[serde(default)]
+    pub fished: f64,
+    #[serde(default)]
+    pub innovations: u64,
+    #[serde(default)]
+    pub knowledge_exchanges: u64,
+    #[serde(default)]
+    pub water_crossings: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

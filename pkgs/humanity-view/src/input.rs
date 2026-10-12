@@ -37,6 +37,15 @@ pub fn controls(
     }
     if keys.just_pressed(KeyCode::Escape) {
         view.insights_open = false;
+        if let Some(id) = view.following
+            && let Some(i) = game.world.tribes.iter().position(|t| t.id == id)
+        {
+            view.focus_index = i;
+        }
+        view.following = None;
+        view.selected = None;
+        view.dirty = true;
+        view.status = "Focus cleared / F follows the next band.".into();
     }
     if keys.just_pressed(KeyCode::Space) {
         view.paused = !view.paused;

@@ -7,10 +7,10 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 humanity-core.workspace = true
+humanity-world.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 tempfile = "3"
 
 [dev-dependencies]
-humanity-world.workspace = true
 humanity-sim.workspace = true

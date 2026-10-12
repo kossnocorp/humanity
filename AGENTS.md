@@ -9,3 +9,4 @@
 - Use simple self-authored SVG assets for the prototype. Maintain runnable instructions in `HUMANS.md`.
 - Keep this file slim: record enduring project/process facts supplied by the user, not implementation details derivable from code.
 - Before finishing changes, format, run relevant tests and Clippy, and exercise meaningful simulation changes headlessly with saved-state inspection.
+- Use the standard Cargo `target/` directory for builds and checks.

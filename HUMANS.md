@@ -30,8 +30,10 @@ With mise installed, `mise run play`, `mise run simulate`, and `mise run check` 
 | Click a surface cell | Inspect climate, resources, bands, demographics, languages |
 | S | Atomically save to `--save` (default `saves/world.json`) |
 | L | Restore that snapshot, paused |
-| Tab | Biomes/snow → temperature → edible resources |
+| Tab | Biomes/snow → temperature → land food → aquatic food → craft materials |
+| Wheel over field notes | Scroll resources, wildlife, band knowledge and equipment |
 | F | Follow the next human band as it moves; arrows/drag/click/Home release it |
+| Esc | Unfollow and clear the active selection; also close population insights |
 | Home | Return to whole-globe distance |
 | `?` (Shift+/ on US keyboards) | Open/close live population insights; Esc also closes |
 
@@ -69,7 +71,17 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v2:** the spherical topology changes cell IDs and geography. Cylindrical v1 snapshots are rejected with an explanation; start a new planet. The deterministic grid is rebuilt from its resolution when loading rather than storing redundant geometry in JSON.
+**Save format v3:** knowledge, equipment, aquatic stocks and material resources persist. Spherical v2 saves upgrade deterministically on load: existing people, geography, events and RNG are preserved, new resources and starting repertoires are initialized. Their future trajectory changes under the new rules. Cylindrical v1 saves still require a new planet. Geometry is rebuilt from resolution rather than duplicated in JSON.
+
+### Wildlife, fishing and cultures
+
+Six migrating land-animal types have distinct habitat preferences, reproductive rates, hunting difficulty and meat yields. Rivers, lakes and seas carry renewable fish and shellfish biomass. Fishing competes with hunting/gathering for labor. Bands collect wood, fiber, toolstone and hides, craft watercraft, preserve food, and develop species-specific hunting familiarity.
+
+Thirteen practical traditions spread through adult/elder teaching, children's apprenticeship, local experimentation and peaceful inter-band contact. Shared language makes transmission more likely; demonstration can occasionally cross language barriers. Boats require both knowledge and enough material-built passenger capacity; they enable short water crossings and faster river travel.
+
+Select a cell and scroll the field-notes panel to inspect all of this. The aquatic overlay shows fish/shellfish biomass; the material overlay maps stone to red, wood to green and fiber to blue. `--inspect` includes species counts, adult knowledge, fishing totals, innovations, knowledge transfers and boat journeys.
+
+See [PREHISTORY.md](PREHISTORY.md) for archaeological examples, sources, exact mechanisms and modelling boundaries.
 
 ## Headless runs, resume, inspect
 

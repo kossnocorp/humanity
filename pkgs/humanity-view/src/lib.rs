@@ -26,13 +26,17 @@ enum Layer {
     Biomes,
     Temperature,
     Food,
+    Aquatic,
+    Materials,
 }
 impl Layer {
     fn next(self) -> Self {
         match self {
             Self::Biomes => Self::Temperature,
             Self::Temperature => Self::Food,
-            Self::Food => Self::Biomes,
+            Self::Food => Self::Aquatic,
+            Self::Aquatic => Self::Materials,
+            Self::Materials => Self::Biomes,
         }
     }
     fn label(self) -> &'static str {
@@ -40,6 +44,8 @@ impl Layer {
             Self::Biomes => "BIOMES + SNOW",
             Self::Temperature => "TEMPERATURE",
             Self::Food => "EDIBLE RESOURCES",
+            Self::Aquatic => "FISH + SHELLFISH (BIOMASS)",
+            Self::Materials => "MATERIALS: STONE / WOOD / FIBER",
         }
     }
 }
@@ -129,6 +135,7 @@ pub fn run(
                 map::orbit_camera,
                 map::redraw,
                 ui::update,
+                ui::scroll,
                 insights::update,
                 insights::scroll,
                 capture_frame,

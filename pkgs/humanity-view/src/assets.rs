@@ -10,6 +10,7 @@ pub struct Icons {
     pub herd: Handle<Image>,
     pub forest: Handle<Image>,
     pub mountain: Handle<Image>,
+    pub fish: Handle<Image>,
 }
 
 /// Embedded SVG sources make launching independent of the working directory.
@@ -50,5 +51,6 @@ pub fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         herd: svg(include_str!("../assets/herd.svg")),
         forest: svg(include_str!("../assets/forest.svg")),
         mountain: svg(include_str!("../assets/mountain.svg")),
+        fish: svg(include_str!("../assets/fish.svg")),
     });
 }
