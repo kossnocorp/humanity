@@ -33,9 +33,15 @@ pub fn controls(
             && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]))
     {
         view.insights_open = !view.insights_open;
+        view.band_screen.band = None;
         view.drag_start = None;
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    if keys.just_pressed(KeyCode::KeyI) {
+        band_screen::toggle(&game.world, &mut view);
+    }
+    if keys.just_pressed(KeyCode::Escape) && view.band_screen.band.is_some() {
+        view.band_screen.band = None;
+    } else if keys.just_pressed(KeyCode::Escape) {
         view.selected_human = None;
         view.insights_open = false;
         if let Some(id) = view.following
@@ -84,10 +90,16 @@ pub fn controls(
                 view.selected = None;
                 view.selected_human = None;
                 view.following = None;
+                view.band_screen.band = None;
                 view.status = format!("Loaded day {} / paused", game.world.day);
             }
             Err(e) => view.status = format!("Load failed: {e:#}"),
         }
+    }
+    if view.band_screen.band.is_some() {
+        band_screen::keyboard(&keys, &game.world, &mut view);
+        wheel.clear();
+        return;
     }
     if view.insights_open {
         wheel.clear();

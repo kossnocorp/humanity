@@ -35,8 +35,9 @@ With mise installed, `mise run play`, `mise run simulate`, and `mise run check` 
 | F | Follow the next human band as it moves; arrows/drag/click/Home release it |
 | Esc | Unfollow and clear the active selection; also close population insights |
 | B | Show/hide the entity browser (left sidebar) |
+| I | Open/close the focused band's individual screen: member list left, detailed stats right |
 | Alt+Up/Down | Select the previous/next browser entry |
-| Alt+Left/Right | Switch Bands / Camps / Cultures / Languages |
+| Alt+Left/Right | Switch Bands / Humans / Camps / Cultures / Languages |
 | Enter | Open selected group/camp, or navigate to and follow a band |
 | Backspace | Return from a filtered band list to its parent category |
 | PageUp/PageDown / wheel over browser | Page through entries / move the selection |
@@ -82,6 +83,15 @@ cargo run -p humanity-cli --no-default-features -- --inspect saves/world.json --
 
 To open the viewer on a specific living individual, use
 `cargo run -p humanity-cli -- --load saves/world.json --follow-human 42 --paused`.
+
+Press **I** for the focused band's full-screen inspector. Click a member on the
+left, or use **Up/Down** and **PgUp/PgDn**; wheel over the list changes selection.
+The right panel shows age, health, role, working time, all personal skill/experience
+and learning stats, plus the latest 30 biography events. Wheel over that panel to
+scroll. Selection uses stable IDs as the simulation runs; deaths/departures and
+band extinction are handled explicitly. **Space and -/+ remain live.** I, Esc or
+the Close button returns to the globe without clearing focus. Launch directly with
+`--band-screen --follow-band ID` (optionally `--paused`).
 
 The `+` speed ceiling is **16,384 days/second** (64x the previous limit). Actual throughput depends on planet size and hardware; simulation work retains an 8ms frame budget to keep controls responsive.
 

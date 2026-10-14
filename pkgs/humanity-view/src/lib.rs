@@ -1,5 +1,6 @@
 //! Bevy is an adapter over the simulation, never its source of truth.
 mod assets;
+mod band_screen;
 mod input;
 mod insights;
 mod map;
@@ -80,8 +81,10 @@ struct ViewState {
     orbit: Quat,
     distance: f32,
     navigation: navigation::Navigator,
+    band_screen: band_screen::BandScreen,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     world: World,
     save_path: PathBuf,
@@ -90,8 +93,17 @@ pub fn run(
     insights_open: bool,
     following: Option<u32>,
     selected_human: Option<u64>,
+    open_band_screen: bool,
 ) -> bool {
     let navigation = navigation::initial(&world, selected_human);
+    let mut initial_view = ViewState {
+        following,
+        selected_human,
+        ..default()
+    };
+    if open_band_screen {
+        band_screen::toggle(&world, &mut initial_view);
+    }
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.035, 0.06, 0.085)))
         .insert_resource(Game {
@@ -126,6 +138,7 @@ pub fn run(
             orbit: Quat::IDENTITY,
             distance: PLANET_RADIUS * 3.2,
             navigation,
+            band_screen: initial_view.band_screen,
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -140,6 +153,7 @@ pub fn run(
             Update,
             (
                 navigation::interact,
+                band_screen::interact,
                 input::controls,
                 tick,
                 map::orbit_camera,
@@ -151,6 +165,8 @@ pub fn run(
                 insights::analytics_interact,
                 insights::update,
                 insights::scroll,
+                band_screen::update,
+                band_screen::scroll,
                 capture_frame,
             )
                 .chain(),

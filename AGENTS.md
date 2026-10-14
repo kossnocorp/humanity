@@ -9,6 +9,7 @@
 - Bands share evolving cultures; isolation and mixing can form new identities. Remembered camps support multi-season use and decay without visits/upkeep. Keep cultural variants and tuning parameters inspectable in a dedicated crate. Existing-save compatibility is not required.
 - Until the user explicitly says otherwise, discard old save formats: no backward compatibility, migrations, or fallback initialization for missing save data. Require fresh saves when the format changes.
 - Controls: Space pause; -/+ time speed; arrows/drag rotate the globe; wheel zoom; S save; L load.
+- `I` opens a band screen with individuals listed on the left and selected-person details on the right.
 - `?` opens live population/mortality charts with persisted diagnostics; Space and -/+ still control time there. `F` follows a moving band, keeping it centered.
 - Use simple self-authored SVG assets for the prototype. Maintain runnable instructions in `HUMANS.md`.
 - Keep this file slim: record enduring project/process facts supplied by the user, not implementation details derivable from code.

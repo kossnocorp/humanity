@@ -65,6 +65,9 @@ struct Args {
     /// Open the viewer inspecting this living human and following their current band.
     #[arg(long, conflicts_with_all = ["headless", "follow_band"])]
     follow_human: Option<u64>,
+    /// Open the focused band's two-column individual inspector (I in the viewer).
+    #[arg(long, conflicts_with_all = ["headless", "insights"])]
+    band_screen: bool,
     /// Optional analytics retention in simulated years; omitted means unlimited for new worlds.
     #[arg(long, conflicts_with_all = ["no_analytics", "analytics_unlimited"], value_parser = clap::value_parser!(u32).range(1..))]
     analytics_years: Option<u32>,
@@ -209,6 +212,7 @@ fn main() -> Result<()> {
         args.insights,
         following,
         args.follow_human,
+        args.band_screen,
     ) {
         bail!("viewer exited with an error");
     }

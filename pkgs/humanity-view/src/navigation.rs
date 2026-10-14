@@ -426,7 +426,7 @@ pub fn interact(
     mut wheel: MessageReader<MouseWheel>,
     window: Single<&Window, With<PrimaryWindow>>,
 ) {
-    if view.insights_open {
+    if view.insights_open || view.band_screen.band.is_some() {
         wheel.clear();
         return;
     }
@@ -490,7 +490,7 @@ pub fn update(
     panels: Query<Entity, With<Panel>>,
 ) {
     let revision = view.snapshot_revision;
-    let insights = view.insights_open;
+    let insights = view.insights_open || view.band_screen.band.is_some();
     let row_height = if view.navigation.tab == Tab::Camps {
         84.
     } else {

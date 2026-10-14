@@ -73,6 +73,8 @@ JSON saves remain inspectable and require fresh worlds. No migrations.
 Individuals practice through actual work; others learn less from those activities'
 stories. Teachers cap instruction at 80% of their own skill; stories at 35%.
 The browser's **Humans** tab and `--inspect SAVE --human ID` expose personal records.
+**I** opens a live two-column band screen: member list on the left, individual
+stats/skills and recent biography on the right; mouse/keyboard selection and scrolling.
 Analytics defaults to unlimited; configurable years/off leave living biographies intact.
 
 ### Domain ownership and crate boundaries
