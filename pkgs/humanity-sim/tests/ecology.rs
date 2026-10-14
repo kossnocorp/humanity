@@ -78,14 +78,13 @@ fn climates_and_dense_populations_keep_valid_stocks_and_accounting() {
 fn diagnostic_history_is_bounded_and_all_deaths_are_accounted_for() {
     let mut w = humanity_world::generate(config(42)).unwrap();
     Simulation::default().advance(&mut w, 750);
-    assert_eq!(w.insights.history.len(), HISTORY_DAYS);
-    assert_eq!(w.insights.history.front().unwrap().day, 31);
+    assert_eq!(w.insights.history.len(), 751);
+    assert_eq!(w.insights.history.front().unwrap().day, 0);
     assert_eq!(w.insights.deaths.checked_total(), Some(w.totals.deaths));
     assert!(w.insights.deaths.nutrition > 0);
     assert!(w.insights.deaths.background > 0);
     assert!(w.insights.deaths.aging > 0);
     assert!(w.insights.deaths.conflict > 0);
-    assert_eq!(w.insights.deaths.unrecorded, 0);
     assert!(w.insights.recent_deaths.len() <= DEATH_RECORDS);
     for s in &w.insights.history {
         assert_eq!(

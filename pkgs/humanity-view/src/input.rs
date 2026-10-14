@@ -52,7 +52,7 @@ pub fn controls(
         view.accumulator = 0.;
     }
     if keys.any_just_pressed([KeyCode::Equal, KeyCode::NumpadAdd]) {
-        view.speed = (view.speed * 2.).min(256.);
+        view.speed = (view.speed * 2.).min(16_384.);
     }
     if keys.any_just_pressed([KeyCode::Minus, KeyCode::NumpadSubtract]) {
         view.speed = (view.speed / 2.).max(0.25);

@@ -5,6 +5,7 @@
 - Cargo monorepo: dedicated `humanity-*` crates under `pkgs/`. Keep simulation independent of rendering; prioritize fast incremental builds and large aggregate populations over individual-person entities.
 - Geography, climate, seasons, ecology, migration, tribal demographics/languages, and probabilistic events must interact. Seeded headless runs and inspectable saves are first-class.
 - Bands share evolving cultures; isolation and mixing can form new identities. Remembered camps support multi-season use and decay without visits/upkeep. Keep cultural variants and tuning parameters inspectable in a dedicated crate. Existing-save compatibility is not required.
+- Until the user explicitly says otherwise, discard old save formats: no backward compatibility, migrations, or fallback initialization for missing save data. Require fresh saves when the format changes.
 - Controls: Space pause; -/+ time speed; arrows/drag rotate the globe; wheel zoom; S save; L load.
 - `?` opens live population/mortality charts with persisted diagnostics; Space and -/+ still control time there. `F` follows a moving band, keeping it centered.
 - Use simple self-authored SVG assets for the prototype. Maintain runnable instructions in `HUMANS.md`.

@@ -35,9 +35,6 @@ impl Simulation {
     }
 
     pub fn step(&mut self, world: &mut World) {
-        if world.insights.since_day.is_none() {
-            world.record_population();
-        }
         world.day += 1;
         humanity_world::update_environment(world, false);
         migrate_herds(world);

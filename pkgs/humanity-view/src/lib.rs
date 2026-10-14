@@ -55,6 +55,7 @@ impl Layer {
 struct ViewState {
     paused: bool,
     speed: f32,
+    chart_range: usize,
     accumulator: f32,
     save_path: PathBuf,
     status: String,
@@ -97,6 +98,7 @@ pub fn run(
         .insert_resource(ViewState {
             paused,
             speed: 4.,
+            chart_range: 0,
             accumulator: 0.,
             save_path,
             status: "Click a hex to inspect its ecology and people.".into(),
@@ -141,6 +143,7 @@ pub fn run(
                 ui::update,
                 ui::scroll,
                 navigation::update,
+                insights::interact,
                 insights::update,
                 insights::scroll,
                 capture_frame,
@@ -155,18 +158,17 @@ fn tick(time: Res<Time>, mut game: ResMut<Game>, mut view: ResMut<ViewState>) {
     if view.paused {
         return;
     }
-    view.accumulator = (view.accumulator + time.delta_secs().min(0.25) * view.speed).min(32.);
+    view.accumulator =
+        (view.accumulator + time.delta_secs().min(0.25) * view.speed).min(view.speed.max(32.));
     let start = std::time::Instant::now();
     let Game { world, simulation } = &mut *game;
-    let mut steps = 0;
-    while view.accumulator >= 1. && steps < 8 {
+    while view.accumulator >= 1. {
         if world.day >= 999_999_998 {
             view.paused = true;
             break;
         }
         simulation.step(world);
         view.accumulator -= 1.;
-        steps += 1;
         if start.elapsed().as_millis() >= 8 {
             break;
         }

@@ -48,11 +48,8 @@ pub fn load(path: impl AsRef<Path>) -> Result<World> {
         header.version
     );
     reader.seek(SeekFrom::Start(0))?;
-    let mut world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
+    let world: World = serde_json::from_reader(reader).context("decoding snapshot")?;
     validate(&world).context("invalid snapshot")?;
-    if world.insights.since_day.is_none() {
-        world.record_population();
-    }
     Ok(world)
 }
 
@@ -381,22 +378,16 @@ pub fn validate(w: &World) -> Result<()> {
 
 fn validate_insights(w: &World) -> Result<()> {
     let d = &w.insights;
-    let Some(since) = d.since_day else {
-        ensure!(
-            d.history.is_empty()
-                && d.recent_deaths.is_empty()
-                && d.deaths == DeathCounts::default(),
-            "incomplete population diagnostics"
-        );
-        return Ok(());
-    };
+    let since = d
+        .since_day
+        .context("missing population diagnostics baseline")?;
     ensure!(
         since <= w.day && d.deaths.checked_total() == Some(w.totals.deaths),
         "death cause accounting mismatch"
     );
     ensure!(
         !d.history.is_empty()
-            && d.history.len() <= HISTORY_DAYS
+            && d.history.len() <= history_capacity(w.config.year_days())
             && d.recent_deaths.len() <= DEATH_RECORDS,
         "invalid diagnostic history size"
     );
@@ -591,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_diagnostics_get_an_honest_baseline_and_corruption_is_rejected() {
+    fn missing_diagnostics_and_corruption_are_rejected() {
         let mut w = world();
         humanity_sim::Simulation::default().advance(&mut w, 70);
         let mut old = serde_json::to_value(&w).unwrap();
@@ -599,14 +590,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("old.json");
         fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
-        let mut restored = load(&path).unwrap();
-        assert_eq!(restored.insights.deaths.unrecorded, w.totals.deaths);
-        assert_eq!(restored.insights.since_day, Some(70));
-        assert_eq!(restored.insights.history.len(), 1);
-        humanity_sim::Simulation::default().advance(&mut restored, 30);
-        validate(&restored).unwrap();
-        restored.insights.deaths.nutrition += 1;
-        assert!(validate(&restored).is_err());
+        assert!(load(&path).is_err());
+        w.insights.deaths.nutrition += 1;
+        assert!(validate(&w).is_err());
     }
 
     #[test]

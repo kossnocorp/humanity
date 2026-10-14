@@ -6,6 +6,52 @@ use humanity_core::{DeathCause, PopulationSample};
 
 #[derive(Component)]
 pub struct Dashboard;
+
+const RANGES: [(&str, u64, bool); 9] = [
+    ("30 days", 30, false),
+    ("90 days", 90, false),
+    ("180 days", 180, false),
+    ("1 year", 1, true),
+    ("3 years", 3, true),
+    ("5 years", 5, true),
+    ("10 years", 10, true),
+    ("25 years", 25, true),
+    ("100 years", 100, true),
+];
+
+#[derive(Component)]
+pub struct RangeButton(usize);
+
+pub fn interact(
+    buttons: Query<(&Interaction, &RangeButton), Changed<Interaction>>,
+    mut view: ResMut<ViewState>,
+) {
+    for (interaction, range) in &buttons {
+        if *interaction == Interaction::Pressed {
+            view.chart_range = range.0;
+        }
+    }
+}
+
+fn selected_history(world: &World, range: usize) -> Vec<&PopulationSample> {
+    let (_, length, years) = RANGES[range];
+    let days = if years {
+        length * u64::from(world.config.year_days())
+    } else {
+        length
+    };
+    let start = if length == 0 {
+        0
+    } else {
+        world.day.saturating_sub(days)
+    };
+    world
+        .insights
+        .history
+        .iter()
+        .filter(|s| s.day >= start)
+        .collect()
+}
 const TEXT: Color = Color::srgb(0.87, 0.9, 0.85);
 const MUTED: Color = Color::srgb(0.57, 0.68, 0.7);
 const GOLD: Color = Color::srgb(0.95, 0.78, 0.49);
@@ -143,13 +189,12 @@ fn cause_color(c: DeathCause) -> Color {
         DeathCause::Background => MUTED,
         DeathCause::Aging => GOLD,
         DeathCause::Conflict => Color::srgb(0.68, 0.49, 0.81),
-        DeathCause::Unrecorded => Color::srgb(0.37, 0.44, 0.49),
     }
 }
 
 #[derive(Default)]
 pub struct DashboardCache {
-    key: Option<(u64, u64, bool, u32)>,
+    key: Option<(u64, u64, bool, u32, usize)>,
     updated: f64,
     snapshot_revision: u64,
 }
@@ -171,10 +216,17 @@ pub fn update(
     }
     let w = &game.world;
     let d = &w.insights;
-    let key = (w.day, w.rng.state, view.paused, view.speed.to_bits());
+    let key = (
+        w.day,
+        w.rng.state,
+        view.paused,
+        view.speed.to_bits(),
+        view.chart_range,
+    );
     if !roots.is_empty()
         && ((cache.key == Some(key) && cache.snapshot_revision == view.snapshot_revision)
-            || time.elapsed_secs_f64() - cache.updated < 0.25)
+            || (cache.key.is_some_and(|k| k.4 == view.chart_range)
+                && time.elapsed_secs_f64() - cache.updated < 0.25))
     {
         return;
     }
@@ -229,6 +281,43 @@ pub fn update(
         14.,
         TEXT,
     );
+    let switches = row(&mut commands, root);
+    commands.entity(switches).insert(Node {
+        flex_wrap: FlexWrap::Wrap,
+        column_gap: px(6),
+        row_gap: px(6),
+        flex_shrink: 0.,
+        ..default()
+    });
+    for (index, (text, _, _)) in RANGES.iter().enumerate() {
+        let button = commands
+            .spawn((
+                Button,
+                RangeButton(index),
+                Node {
+                    padding: UiRect::axes(px(10), px(8)),
+                    ..default()
+                },
+                BackgroundColor(if index == view.chart_range {
+                    Color::srgb(0.25, 0.35, 0.38)
+                } else {
+                    Color::srgb(0.09, 0.14, 0.17)
+                }),
+            ))
+            .id();
+        commands.entity(switches).add_child(button);
+        label(
+            &mut commands,
+            button,
+            *text,
+            13.,
+            if index == view.chart_range {
+                GOLD
+            } else {
+                TEXT
+            },
+        );
+    }
     let Some(latest) = d.history.back() else {
         label(
             &mut commands,
@@ -239,13 +328,9 @@ pub fn update(
         );
         return;
     };
-    let history: Vec<_> = d.history.iter().collect();
+    let history = selected_history(w, view.chart_range);
     let first = history[0];
-    let recent = history
-        .iter()
-        .find(|s| s.day >= w.day.saturating_sub(30))
-        .copied()
-        .unwrap_or(latest);
+    let recent = first;
     label(
         &mut commands,
         root,
@@ -334,10 +419,18 @@ pub fn update(
 
     let middle = row(&mut commands, root);
     let causes = panel(&mut commands, middle);
-    label(&mut commands, causes, "LIFETIME DEATHS BY CAUSE", 15., GOLD);
+    label(
+        &mut commands,
+        causes,
+        "DEATHS BY CAUSE / SELECTED RANGE",
+        15.,
+        GOLD,
+    );
+    let total =
+        latest.deaths.checked_total().unwrap_or(0) - first.deaths.checked_total().unwrap_or(0);
     for c in DeathCause::ALL {
-        let count = d.deaths.get(c);
-        let share = count as f32 / w.totals.deaths.max(1) as f32 * 100.;
+        let count = latest.deaths.get(c) - first.deaths.get(c);
+        let share = count as f32 / total.max(1) as f32 * 100.;
         label(
             &mut commands,
             causes,
@@ -346,6 +439,58 @@ pub fn update(
             cause_color(c),
         );
         bar(&mut commands, causes, share, cause_color(c));
+    }
+    let cause_charts = row(&mut commands, root);
+    commands.entity(cause_charts).insert(Node {
+        flex_wrap: FlexWrap::Wrap,
+        column_gap: px(14),
+        row_gap: px(14),
+        flex_shrink: 0.,
+        ..default()
+    });
+    let series: Vec<_> = DeathCause::ALL
+        .into_iter()
+        .map(|cause| {
+            let mut previous = first;
+            let values: Vec<_> = history[1..]
+                .chunks(stride)
+                .map(|chunk| {
+                    let current = *chunk.last().unwrap();
+                    let count = (current.deaths.get(cause) - previous.deaths.get(cause)) as f32;
+                    let rate = count / (current.day - previous.day).max(1) as f32;
+                    previous = current;
+                    (rate, rate)
+                })
+                .collect();
+            (cause, values)
+        })
+        .collect();
+    let peak = series
+        .iter()
+        .flat_map(|(_, values)| values.iter().map(|v| v.0))
+        .fold(1_f32, f32::max);
+    for (cause, values) in series {
+        let chart = panel(&mut commands, cause_charts);
+        commands.entity(chart).insert(Node {
+            flex_direction: FlexDirection::Column,
+            width: px(260),
+            flex_grow: 1.,
+            padding: UiRect::all(px(16)),
+            row_gap: px(7),
+            ..default()
+        });
+        label(&mut commands, chart, cause.label(), 14., cause_color(cause));
+        plot(&mut commands, chart, &values, peak, [cause_color(cause); 2]);
+        label(
+            &mut commands,
+            chart,
+            format!(
+                "0 .. {peak:.2} deaths/day (bucket mean)\nDay {} -> {}",
+                first.day, latest.day
+            ),
+            12.,
+            MUTED,
+        );
     }
     let cohorts = panel(&mut commands, middle);
     label(
@@ -431,9 +576,9 @@ pub fn update(
         &mut commands,
         explanation,
         format!(
-            "Tracking began on day {}. Last {} days / {} death groups kept.\nOlder save deaths stay unrecorded; past history isn't reconstructed.",
+            "Tracking began on day {}. Up to {} daily samples / {} death groups kept.\nCharts show available history only; years use this planet's calendar.",
             d.since_day.unwrap_or(w.day),
-            humanity_core::HISTORY_DAYS,
+            humanity_core::history_capacity(w.config.year_days()),
             humanity_core::DEATH_RECORDS
         ),
         12.,
@@ -474,4 +619,58 @@ fn flow_buckets(history: &[&PopulationSample], stride: usize) -> Vec<(f32, f32)>
             result
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn ranges_use_calendar_days_and_clicks_work_while_paused() {
+        let mut world = humanity_world::generate(humanity_core::PlanetConfig {
+            resolution: 6,
+            cell_km: 20.,
+            temperature: 28.,
+            season_days: 30,
+            axial_tilt: 23.4,
+            ocean_fraction: 0.6,
+            rainfall: 1.,
+            population: 500,
+            seed: 42,
+        })
+        .unwrap();
+        for day in 1..=12_100 {
+            world.day = day;
+            world.totals.deaths = day * 2;
+            world.insights.deaths.nutrition = day * 2;
+            world.record_population();
+        }
+        assert_eq!(world.insights.history.len(), 12_001);
+        assert_eq!(world.insights.history.front().unwrap().day, 100);
+        for (range, days) in [30, 90, 180, 120, 360, 600, 1200, 3000, 12000]
+            .into_iter()
+            .enumerate()
+        {
+            let history = selected_history(&world, range);
+            assert_eq!(history.len(), days + 1);
+            assert_eq!(
+                history.last().unwrap().deaths.nutrition - history[0].deaths.nutrition,
+                days as u64 * 2
+            );
+            let buckets = flow_buckets(&history, history.len().div_ceil(96));
+            assert_eq!(buckets.iter().map(|b| b.1).sum::<f32>(), days as f32 * 2.);
+        }
+        let mut app = App::new();
+        app.insert_resource(ViewState {
+            paused: true,
+            insights_open: true,
+            ..default()
+        });
+        app.world_mut()
+            .spawn((RangeButton(8), Interaction::Pressed));
+        app.world_mut().run_system_once(interact).unwrap();
+        assert_eq!(app.world().resource::<ViewState>().chart_range, 8);
+        assert!(app.world().resource::<ViewState>().paused);
+    }
 }

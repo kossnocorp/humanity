@@ -59,7 +59,9 @@ The `?` screen charts population, births/deaths, lifetime death causes, and curr
 
 Deaths are tracked as nutrition/poor-health mortality, background mortality, additional elder mortality, or conflict casualties. The shared background/health death roll is attributed proportionally to those risks using a separate deterministic random stream, preserving gameplay outcomes. Cold/snow affect food access and demand; they are not separate direct death causes in this model. Poor health can also reflect conflict injuries.
 
-Diagnostics persist in saves: the last 720 daily samples, lifetime cause totals, and 128 recent death groups. Spherical saves lacking diagnostics start history when loaded and label previous deaths **unrecorded**, without inventing causes or past charts. `--inspect` and headless JSON summaries also include cause totals.
+Diagnostics persist in saves: the last 100 simulated years of daily samples (plus a baseline), lifetime cause totals, and 128 recent death groups. In the `?` dashboard, click **30/90/180 days** or **1/3/5/10/25/100 years** to change the population, births/deaths, and death-cause charts together. Cause totals cover the selected period; each cause also has a time chart with a shared deaths/day scale. Years follow the planet's calendar, and charts show only available recorded history. `--inspect` and headless JSON summaries also include cause totals.
+
+The `+` speed ceiling is **16,384 days/second** (64x the previous limit). Actual throughput depends on planet size and hardware; simulation work retains an 8ms frame budget to keep controls responsive.
 
 Cream camp icons are mobile human bands, not settlements. Ochre animal icons are herds. Rivers follow the curved surface; snow lightens the ground. The header names the **northern** season; the southern hemisphere has the opposite season. Temperature overlay runs blue → red; resource overlay brown → green. Large planets use a coarse globe at orbital distance; zoom in for exact cells and rivers. `F` moves close to the next band and follows it; `--follow-band 0` starts following band 0.
 
@@ -87,7 +89,7 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v5:** stores multi-season camp use, bounded occupation histories,
+**Save format v6:** stores multi-season camp use, bounded occupation histories,
 condition and maintenance along with cultures, ecology and demographics. **Start a
 new world: older save versions are not supported or migrated.** Geometry is rebuilt
 from resolution rather than duplicated in JSON.

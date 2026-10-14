@@ -1,7 +1,10 @@
 use crate::*;
 use std::collections::VecDeque;
 
-pub const HISTORY_DAYS: usize = 720;
+/// Daily samples for a full century, plus the starting cumulative-count baseline.
+pub fn history_capacity(year_days: u32) -> usize {
+    year_days as usize * 100 + 1
+}
 pub const DEATH_RECORDS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -10,15 +13,13 @@ pub enum DeathCause {
     Background,
     Aging,
     Conflict,
-    Unrecorded,
 }
 impl DeathCause {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 4] = [
         Self::Nutrition,
         Self::Background,
         Self::Aging,
         Self::Conflict,
-        Self::Unrecorded,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -26,7 +27,6 @@ impl DeathCause {
             Self::Background => "Background mortality",
             Self::Aging => "Elder mortality",
             Self::Conflict => "Tribal conflict",
-            Self::Unrecorded => "Unrecorded (older save)",
         }
     }
 }
@@ -37,7 +37,6 @@ pub struct DeathCounts {
     pub background: u64,
     pub aging: u64,
     pub conflict: u64,
-    pub unrecorded: u64,
 }
 impl DeathCounts {
     pub fn get(self, cause: DeathCause) -> u64 {
@@ -46,7 +45,6 @@ impl DeathCounts {
             DeathCause::Background => self.background,
             DeathCause::Aging => self.aging,
             DeathCause::Conflict => self.conflict,
-            DeathCause::Unrecorded => self.unrecorded,
         }
     }
     pub fn checked_total(self) -> Option<u64> {
@@ -60,7 +58,6 @@ impl DeathCounts {
             DeathCause::Background => &mut self.background,
             DeathCause::Aging => &mut self.aging,
             DeathCause::Conflict => &mut self.conflict,
-            DeathCause::Unrecorded => &mut self.unrecorded,
         };
         *field += u64::from(count);
     }
@@ -127,7 +124,6 @@ impl World {
     pub fn record_population(&mut self) {
         if self.insights.since_day.is_none() {
             self.insights.since_day = Some(self.day);
-            self.insights.deaths.unrecorded = self.totals.deaths;
         }
         let mut sample = PopulationSample {
             day: self.day,
@@ -162,7 +158,7 @@ impl World {
         {
             self.insights.history.pop_back();
         }
-        if self.insights.history.len() == HISTORY_DAYS {
+        while self.insights.history.len() >= history_capacity(self.config.year_days()) {
             self.insights.history.pop_front();
         }
         self.insights.history.push_back(sample);

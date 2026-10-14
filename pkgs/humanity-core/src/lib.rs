@@ -8,7 +8,7 @@ pub use insights::*;
 pub use sites::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 6;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,14 +149,10 @@ pub struct Resources {
     pub fruit: f32,
     pub game: f32,
     pub grazing: f32,
-    #[serde(default)]
     pub aquatic: AquaticLife,
-    #[serde(default)]
     pub wood: f32,
-    #[serde(default)]
     pub fiber: f32,
     /// Accessible toolstone availability, 0..1 (outcrop, not a renewable food).
-    #[serde(default)]
     pub toolstone: f32,
 }
 impl Resources {
@@ -269,32 +265,19 @@ pub struct Tribe {
     pub health: f32,
     pub travel: f32,
     pub hunting_skill: f32,
-    #[serde(default)]
     pub knowledge: Knowledge,
-    #[serde(default)]
     pub equipment: Equipment,
     /// Today's fraction of food-working time assigned to aquatic foraging.
-    #[serde(default)]
     pub fishing_effort: f32,
-    #[serde(default)]
     pub camp_tradition: CampTradition,
-    #[serde(default)]
     pub camp_pressure_days: u32,
-    #[serde(default)]
     pub parent_band: Option<u32>,
-    #[serde(default)]
     pub culture: u32,
-    #[serde(default)]
     pub isolation_days: u32,
-    #[serde(default)]
     pub last_cultural_contact: u64,
-    #[serde(default)]
     pub contact_culture: Option<u32>,
-    #[serde(default)]
     pub contact_days: u32,
-    #[serde(default)]
     pub last_foreign_contact: u64,
-    #[serde(default)]
     pub residence_days: u32,
 }
 impl Tribe {
@@ -357,23 +340,14 @@ pub struct Totals {
     pub births: u64,
     pub deaths: u64,
     pub gathered: f64,
-    #[serde(default)]
     pub fished: f64,
-    #[serde(default)]
     pub innovations: u64,
-    #[serde(default)]
     pub knowledge_exchanges: u64,
-    #[serde(default)]
     pub water_crossings: u64,
-    #[serde(default)]
     pub band_fissions: u64,
-    #[serde(default)]
     pub culture_divergences: u64,
-    #[serde(default)]
     pub culture_mixtures: u64,
-    #[serde(default)]
     pub sites_founded: u64,
-    #[serde(default)]
     pub sites_abandoned: u64,
 }
 
@@ -388,18 +362,13 @@ pub struct World {
     pub herds: Vec<Herd>,
     pub tribes: Vec<Tribe>,
     /// Monotonic IDs are never reused, even after a band dies out.
-    #[serde(default)]
     pub next_band_id: u64,
-    #[serde(default)]
     pub cultures: Vec<Culture>,
-    #[serde(default)]
     pub sites: Vec<CulturalSite>,
-    #[serde(default)]
     pub next_site_id: u64,
     /// Bounded recent history; lifetime counters remain in totals.
     pub events: std::collections::VecDeque<Event>,
     pub totals: Totals,
-    #[serde(default)]
     pub insights: PopulationInsights,
 }
 impl World {
