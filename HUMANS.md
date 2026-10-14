@@ -59,7 +59,29 @@ The `?` screen charts population, births/deaths, lifetime death causes, and curr
 
 Deaths are tracked as nutrition/poor-health mortality, background mortality, additional elder mortality, or conflict casualties. The shared background/health death roll is attributed proportionally to those risks using a separate deterministic random stream, preserving gameplay outcomes. Cold/snow affect food access and demand; they are not separate direct death causes in this model. Poor health can also reflect conflict injuries.
 
-Diagnostics persist in saves: the last 100 simulated years of daily samples (plus a baseline), lifetime cause totals, and 128 recent death groups. In the `?` dashboard, click **30/90/180 days** or **1/3/5/10/25/100 years** to change the population, births/deaths, and death-cause charts together. Cause totals cover the selected period; each cause also has a time chart with a shared deaths/day scale. Years follow the planet's calendar, and charts show only available recorded history. `--inspect` and headless JSON summaries also include cause totals.
+Diagnostics persist in saves with **unlimited daily history by default**. Use
+`--analytics-years N` to retain N simulated years plus a baseline, or
+`--no-analytics` to disable optional global history; `--analytics-unlimited` restores
+unlimited recording when loading a capped/off save. The `?` dashboard also has
+recording controls (off, 1/10/100 years, unlimited), separately from its display
+ranges of **30/90/180 days** and **1/3/5/10/25/100 years**. Limits apply in memory
+and saves. Off mode keeps current counters/state and living people's biographies;
+it stops chart samples and optional event/death records. Resuming recording starts
+at the current day without inventing missing history. The general journal and
+recent death context additionally keep their existing 512/128-record bounds.
+
+Open **B > Humans** to browse individual IDs, chronological ages and current roles.
+Select one to follow their band and inspect personal skills, practiced days,
+teaching/story gains and biography in the scrollable field notes. IDs survive band
+splits. A deceased person's full record is currently removed; living biographies
+can still reference them. Headless individual inspection:
+
+```sh
+cargo run -p humanity-cli --no-default-features -- --inspect saves/world.json --human 42
+```
+
+To open the viewer on a specific living individual, use
+`cargo run -p humanity-cli -- --load saves/world.json --follow-human 42 --paused`.
 
 The `+` speed ceiling is **16,384 days/second** (64x the previous limit). Actual throughput depends on planet size and hardware; simulation work retains an 8ms frame budget to keep controls responsive.
 
@@ -76,7 +98,7 @@ For a new world, `--resolution`, `--temperature`, `--season-days`, and `--popula
 | `--radius-km` | Optional physical planet radius instead of `--cell-km`; derived spacing must be 1…200 km |
 | `--temperature` | Annual equatorial sea-level Celsius, solar-heating proxy; −30…60 |
 | `--season-days` | Days in each of four seasons, 4…1000 |
-| `--population` | Initial people, 1…100 million; aggregate cohorts, not individual entities |
+| `--population` | Initial individual human records; memory and runtime scale with people and biographies |
 | `--axial-tilt` | Seasonal temperature amplitude driver in degrees, 23.4 |
 | `--ocean-fraction` | Ocean coverage target, 0.65; inland lakes are additional |
 | `--rainfall` | Precipitation multiplier, 1 |
@@ -89,10 +111,21 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v6:** stores multi-season camp use, bounded occupation histories,
+**Save format v8:** stores individual humans, chronological birth dates, personal
+skills/biographies, analytics policy, local depletion, multi-season camp use,
+bounded occupation histories,
 condition and maintenance along with cultures, ecology and demographics. **Start a
 new world: older save versions are not supported or migrated.** Geometry is rebuilt
 from resolution rather than duplicated in JSON.
+
+Food acquisition now pays for search, distance to fishing patches, and relocation
+time. Repeated harvesting depletes easily reached patches within a cell; resting
+places recover, even while remote regional biomass remains. Multi-year wet/dry
+spells affect soil moisture, river recharge and freshwater productivity. These
+constraints continue after skills mature. See `docs/research/deaths.md` for the
+research, anomaly diagnosis and before/after measurements, and
+`pkgs/humanity-nutrition/src/rules.rs` and `pkgs/humanity-world/src/climate.rs`
+for food-search and climate tuning assumptions.
 
 Each culture/cell has one remembered place, with fishing or residential function.
 The current stay, separate occupation episodes, total occupied days and eight recent
@@ -113,7 +146,18 @@ later be re-established with new IDs. Rates are tunable in `humanity-cultures`.
 
 Six migrating land-animal types have distinct habitat preferences, reproductive rates, hunting difficulty and meat yields. Rivers, lakes and seas carry renewable fish and shellfish biomass. Fishing competes with hunting/gathering for labor. Bands collect wood, fiber, toolstone and hides, craft watercraft, preserve food, and develop species-specific hunting familiarity.
 
-Thirteen practical traditions spread through adult/elder teaching, children's apprenticeship, local experimentation and peaceful inter-band contact. Shared language makes transmission more likely; demonstration can occasionally cross language barriers. Boats require both knowledge and enough material-built passenger capacity; they enable short water crossings and faster river travel.
+Thirteen practical skills belong to individuals. **Actual work earns experience**:
+hunters learn from attempts (less on failure); gathering, fishing, crafting and care
+train their participants. Others hear activity-derived stories and learn more slowly,
+up to 35% of the participant's skill. Demand-driven apprenticeships cap learning at
+80% of the teacher's skill and spend both people's working time. Practice can exceed
+those social-learning caps. No automatic mastery merely from elapsed time.
+
+Roles respond to opportunities, member skills, care and craft needs. The band skill
+summary is derived from its living members; it does not grant proficiency to everyone.
+Birth dates determine actual ages; age-group counts are summaries. Healthy elders
+can still work. Shared language assists inter-band transmission. Boats require
+knowledge and material-built passenger capacity for water travel.
 
 Select a cell and scroll the field-notes panel to inspect all of this. The aquatic overlay shows fish/shellfish biomass; the material overlay maps stone to red, wood to green and fiber to blue. `--inspect` includes species counts, adult knowledge, fishing totals, innovations, knowledge transfers and boat journeys.
 
@@ -147,7 +191,7 @@ cargo run -p humanity-cli -- \
   --load saves/three-years.json --save saves/three-years.json --paused
 ```
 
-`--days` is **additional** days, not an absolute target. Headless runs default to 365 days and always save at the end; `--days 0` saves the initial world. `--report-every 0` suppresses intermediate reports. The normal viewer only saves when S is pressed. Saves contain the entire deterministic RNG state, cohorts, language mixtures, resource stocks, weather, agents, lifetime counters and the last 512 events. They are versioned JSON; failed validation never replaces the current world or an existing save.
+`--days` is **additional** days, not an absolute target. Headless runs default to 365 days and always save at the end; `--days 0` saves the initial world. `--report-every 0` suppresses intermediate reports. The normal viewer only saves when S is pressed. Saves contain the deterministic RNG state, individual humans and biographies, groups, language mixtures, resources, weather, counters and configured analytics. They remain inspectable versioned JSON; binary storage is deferred until measured costs justify it. Failed validation never replaces the current world or an existing save.
 
 Inspect individual records with Python:
 
@@ -185,14 +229,18 @@ cargo run -p humanity-cli -- \
 | Crate | Responsibility |
 |---|---|
 | `humanity-grid` | Geodesic topology, spherical geometry, areas, neighbor queries and picking |
-| `humanity-core` | Compact state, units, serializable deterministic RNG |
+| `humanity-core` | World composition, cells, events, diagnostics and deterministic RNG; re-exports domain types |
+| `humanity-humans` | Individual identities, chronological age, health, biographies and demographic lifecycle |
+| `humanity-bands` | Residential groups, shared equipment, role allocation, apprenticeship and membership transfer |
+| `humanity-skills` | Skill definitions, proficiency/experience, prerequisites and capped learning rules |
+| `humanity-nutrition` | Foraging/hunting/fishing, prey data, food stocks, rations and consumption |
 | `humanity-cultures` | Tunable cultural variant registry, camp customs, social and site parameters |
 | `humanity-world` | Periodic terrain, acyclic drainage/lakes, biomes, daily weather, renewable ecology, initial seeding |
-| `humanity-sim` | Daily phases, sparse spatial indexes, herd/tribe decisions, hunting, contact, demography |
+| `humanity-sim` | Daily orchestration, spatial indexes, movement, contacts and domain integration |
 | `humanity-save` | Snapshot validation, atomic persistence, inspection summaries |
 | `humanity-view` | Bevy 3D globe, orbit camera, UI, embedded self-authored SVG billboard icons |
 | `humanity-cli` | Required arguments, headless execution, optional viewer |
 
 Daily work is linear in cells plus spatially indexed aggregate agents; local encounters are sampled with bounded work rather than all-pairs comparisons. No entity per person or terrain cell. The grid's immutable geometry is shared on clone. Rendering keeps a bounded coarse globe and traverses only a spherical cap for detailed nearby terrain, batching it into meshes. Billboard icons use depth testing and horizon culling. The viewer budgets simulation steps per frame; requested speed may exceed achievable speed on very large worlds. Simulation is single-threaded for deterministic ordering; same-build save/resume is tested byte-for-byte equivalent at the state level.
 
-Prototype approximations: climate and demography are stylized, not scientific forecasts. Seas are shallow ocean margins. River channels use accumulated climatological catchments, not daily fluid simulation. Cell plants, fruit/seeds, small game and grazing are aggregate stocks. Language families mix through peaceful contact. Demography uses female/male child/adult/elder cohorts, with derived labor roles. Events resolve using stored probabilities; conflict events record the winner's combat probability. Fishing settlements are remembered residence locations, without buildings or separate storage. No farming, camp fusion, individual genealogy, or historical language naming yet.
+Prototype approximations: climate and demographic hazards are stylized, not scientific forecasts. River channels use accumulated catchments, not fluid simulation. Food/wildlife stocks remain aggregate, while humans have individual records. Food/equipment and language mixtures remain shared by bands. Pregnancy, complete genealogy, age-specific disease, camp fusion, farming and later hybrid population aggregation remain future work. Fishing locations do not imply buildings or separate storage. Individualization alone is not a claim that long-run demography is calibrated.

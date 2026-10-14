@@ -31,15 +31,24 @@ pub fn exchange(a: &mut Tribe, b: &mut Tribe, language: f32, rng: &mut Rng) -> O
     } else {
         (b, a)
     };
-    if !learner.knowledge.prerequisites(skill) {
+    let teacher_member = teacher
+        .people
+        .members
+        .iter()
+        .max_by(|a, b| a.skills.level(skill).total_cmp(&b.skills.level(skill)))?;
+    let mut learned = false;
+    for h in &mut learner.people.members {
+        learned |= h.skills.learn(
+            skill,
+            teacher_member.skills.level(skill),
+            0.1 * (0.1 + 0.9 * language),
+            true,
+        ) > 0.;
+    }
+    if !learned {
         return None;
     }
-    let gap = teacher.knowledge.level(skill) - learner.knowledge.level(skill);
-    if gap < 0.02 {
-        return None;
-    }
-    let learned = gap * (0.08 + 0.12 * language);
-    learner.knowledge.practitioners[skill as usize][1] += learned;
+    learner.knowledge = learner.people.knowledge(learner.knowledge.prey);
     for (a, b) in learner
         .knowledge
         .prey
@@ -61,21 +70,6 @@ fn opportunity(skill: Skill, c: &Cell, water: bool) -> bool {
     }
 }
 
-/// Within-band apprenticeship and oral teaching. Elders can preserve a practice
-/// even when few working adults know it. No teachers means no spontaneous spread.
-pub fn teach(t: &mut Tribe, year: f32) {
-    let adults = t.people.adults() as f32;
-    let elders = (t.people.female[2] + t.people.male[2]) as f32;
-    let oral = t.knowledge.level(Skill::OralTradition);
-    for k in &mut t.knowledge.practitioners {
-        let teachers = (k[1] * adults + k[2] * elders * 1.5) / (adults + elders * 1.5).max(1.);
-        for (cohort, rate) in [(0, 3.), (1, 1.8), (2, 0.6)] {
-            let gain = teachers * (1. - k[cohort]) * rate * (0.4 + oral) * t.health / year;
-            k[cohort] = (k[cohort] + gain - k[cohort] * 0.04 / year).clamp(0., 1.);
-        }
-    }
-}
-
 pub fn daily(world: &mut World) {
     let mut events = Vec::new();
     for t in &mut world.tribes {
@@ -89,7 +83,52 @@ pub fn daily(world: &mut World) {
         let water = sites
             .iter()
             .any(|&id| world.cells[id as usize].resources.aquatic.total() > 1.);
-        teach(t, world.config.year_days() as f32);
+        let home = &world.cells[t.cell as usize];
+        let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(t.cell);
+        let access = (1. - home.weather.snow * 0.8) / (1. + home.resources.foraging_pressure);
+        let aquatic_opportunity = sites
+            .iter()
+            .map(|&id| {
+                let site = &world.cells[id as usize];
+                if site.biome == Biome::Ocean && t.equipment.boat_places < n * 0.25 {
+                    return 0.;
+                }
+                let distance = world.grid.angular_distance(t.cell, id) * world.config.radius_km();
+                fishing::return_rate(
+                    site.resources.aquatic.total(),
+                    1.,
+                    area,
+                    distance,
+                    site.weather.snow,
+                    site.weather.precipitation,
+                    site.resources.foraging_pressure,
+                ) * 4.
+            })
+            .fold(0_f32, f32::max);
+        let herd_opportunity = if world.herds.iter().any(|h| {
+            h.animals > 0
+                && (h.cell == t.cell || world.grid.neighbors(t.cell).any(|id| id == h.cell))
+        }) {
+            1.5
+        } else {
+            0.
+        };
+        t.assign_roles(
+            world.day,
+            Opportunities {
+                gathering: 3.2
+                    * access
+                    * encounter(
+                        home.resources.plants + home.resources.fruit,
+                        area,
+                        FORAGING.plant_half_density,
+                    ),
+                hunting: access * encounter(home.resources.game, area, FORAGING.game_half_density)
+                    + herd_opportunity,
+                fishing: aquatic_opportunity,
+            },
+        );
+        t.teach_workers(world.day);
         let c = &mut world.cells[t.cell as usize];
         // A bounded experiment, not a universal technology clock.
         if world.day.is_multiple_of(7) && t.people.adults() > 0 {
@@ -100,8 +139,12 @@ pub fn daily(world: &mut World) {
                 && t.knowledge.prerequisites(skill)
                 && world.rng.chance(p)
             {
-                t.knowledge.practitioners[skill as usize][1] =
-                    (t.knowledge.level(skill) + 1. / t.people.adults() as f32).min(1.);
+                if let Some(h) = t.people.members.iter_mut().find(|h| {
+                    h.can_work(world.day, world.config.year_days()) && h.skills.prerequisites(skill)
+                }) {
+                    h.skills.levels[skill as usize] = (h.skills.level(skill) + 0.03).min(1.);
+                }
+                t.knowledge = t.people.knowledge(t.knowledge.prey);
                 world.totals.innovations += 1;
                 events.push(Event {
                     day: world.day,
@@ -114,65 +157,157 @@ pub fn daily(world: &mut World) {
                 });
             }
         }
+        let fishing_labor = t.labor(Role::Fisher);
+        let fishing = t.role_skill(Role::Fisher, Skill::Fishing);
+        let guide_labor = t.labor(Role::Guide);
         let e = &mut t.equipment;
-        let labor = t.people.adults() as f32 * t.health;
-        // Ten percent of labor supports tools, containers and transport.
+        let labor = t
+            .people
+            .members
+            .iter()
+            .filter(|h| h.role != Role::Dependent)
+            .map(|h| h.health * h.work_fraction)
+            .sum::<f32>()
+            * if t.residence_days == 0 {
+                FORAGING.moving_work_fraction
+            } else {
+                1.
+            };
+        // Everyone reserves a tenth of their day; designated crafters use the rest too.
+        let moving = if t.residence_days == 0 {
+            FORAGING.moving_work_fraction
+        } else {
+            1.
+        };
+        let craft_labor = labor * 0.1 + guide_labor * moving * 0.9;
         let wood = c
             .resources
             .wood
-            .min(labor * 0.04)
+            .min(craft_labor * 0.4)
             .min((n * 2. - e.wood).max(0.));
         let fiber = c
             .resources
             .fiber
-            .min(labor * 0.04)
+            .min(craft_labor * 0.4)
             .min((n - e.fiber).max(0.));
         c.resources.wood -= wood;
         e.wood += wood;
         c.resources.fiber -= fiber;
         e.fiber += fiber;
-        e.stone = (e.stone + c.resources.toolstone * labor * 0.02).min(n);
+        let toolstone = c.resources.toolstone;
+        e.stone = (e.stone + toolstone * craft_labor * 0.2).min(n);
         e.stone *= 0.998;
         e.hides *= 0.999;
         e.boat_places *= 0.999;
         let craft = t.knowledge.level(Skill::Watercraft);
+        let mut built_places = 0.;
         if water && craft > 0.15 && t.knowledge.level(Skill::Cordage) > 0.1 {
-            let places = (labor * craft * 0.08)
+            let places = (craft_labor * craft * 0.8)
                 .min(e.wood / 2.)
                 .min(e.fiber)
                 .min((n * 1.15 - e.boat_places).max(0.));
             e.wood -= places * 2.;
             e.fiber -= places;
             e.boat_places += places;
+            built_places = places;
         }
-        t.fishing_effort = if water {
-            (0.12 + t.knowledge.level(Skill::Fishing) * 0.5).min(0.6)
-        } else {
-            0.
-        };
-        let fishing = t.knowledge.level(Skill::Fishing);
         let gear = t.knowledge.level(Skill::Cordage) * (e.fiber / (n * 0.1).max(1.)).min(1.);
-        let mut budget = labor * 0.9 * t.fishing_effort * (1. + fishing * 5. + gear * 2.);
-        let mut catch = 0.;
+        // Choose one daily fishing patch. Failed search and travel consume time,
+        // rather than letting unused catch capacity sweep every neighboring stock.
+        let mut best = None;
+        let mut best_rate = 0.;
         for id in sites {
-            let site = &mut world.cells[id as usize];
+            let site = &world.cells[id as usize];
             if site.biome == Biome::Ocean && (e.boat_places < n * 0.25 || craft < 0.2) {
                 continue;
             }
-            let access = (1. - site.weather.snow * 0.9) / (1. + site.weather.precipitation * 0.08);
-            for (stock, efficiency) in [
-                (&mut site.resources.aquatic.shellfish, 0.8),
-                (&mut site.resources.aquatic.freshwater_fish, fishing),
-                (&mut site.resources.aquatic.coastal_fish, fishing),
-            ] {
-                let take = stock.min(budget * efficiency * access * (0.6 + world.rng.unit() * 0.4));
-                *stock -= take;
-                catch += take;
-                budget -= take;
+            let distance = world.grid.angular_distance(t.cell, id) * world.config.radius_km();
+            let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(id);
+            for (kind, (stock, efficiency)) in [
+                (site.resources.aquatic.shellfish, 0.8),
+                (site.resources.aquatic.freshwater_fish, fishing),
+                (site.resources.aquatic.coastal_fish, fishing),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let rate = fishing::return_rate(
+                    stock,
+                    efficiency,
+                    area,
+                    distance,
+                    site.weather.snow,
+                    site.weather.precipitation,
+                    site.resources.foraging_pressure,
+                );
+                if rate > best_rate {
+                    best_rate = rate;
+                    best = Some((id, kind));
+                }
             }
         }
+        let budget = fishing_labor * moving * 0.9 * (1. + fishing * 5. + gear * 2.);
+        let catch = if let Some((id, kind)) = best {
+            let aquatic = &mut world.cells[id as usize].resources.aquatic;
+            let stock = match kind {
+                0 => &mut aquatic.shellfish,
+                1 => &mut aquatic.freshwater_fish,
+                _ => &mut aquatic.coastal_fish,
+            };
+            let take = fishing::catch(stock, budget, best_rate, world.rng.unit());
+            let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(id);
+            world.cells[id as usize].resources.foraging_pressure +=
+                take / (area * FORAGING.patch_harvest_scale);
+            take
+        } else {
+            0.
+        };
         e.fiber = (e.fiber - labor * t.fishing_effort * 0.004).max(0.);
         t.food += catch;
+        if best.is_some() && fishing_labor > 0. {
+            t.activity(
+                world.day,
+                Role::Fisher,
+                Skill::Fishing,
+                moving * 0.9,
+                catch > 0.,
+            );
+        }
+        // All active workers spend the reserved tenth of their day on real craft work.
+        for h in &mut t.people.members {
+            if h.role != Role::Dependent {
+                let craft_time =
+                    moving * h.work_fraction * if h.role == Role::Guide { 1. } else { 0.1 };
+                if wood > 0. || fiber > 0. {
+                    h.practice(
+                        world.day,
+                        if built_places > 0. {
+                            Skill::Watercraft
+                        } else {
+                            Skill::Cordage
+                        },
+                        craft_time * 0.5,
+                        true,
+                    );
+                }
+                if toolstone > 0. {
+                    h.practice(world.day, Skill::Knapping, craft_time * 0.5, true);
+                }
+            }
+        }
+        if wood > 0. || fiber > 0. {
+            t.craft_stories(
+                if built_places > 0. {
+                    Skill::Watercraft
+                } else {
+                    Skill::Cordage
+                },
+                moving * 0.05,
+            );
+        }
+        if toolstone > 0. {
+            t.craft_stories(Skill::Knapping, moving * 0.05);
+        }
         world.totals.fished += f64::from(catch);
         if catch > 1. && world.day.is_multiple_of(14) {
             events.push(Event {
@@ -244,9 +379,22 @@ mod tests {
     #[test]
     fn elders_teach_children_and_adults_but_absent_knowledge_does_not_spread() {
         let mut t = world().tribes.remove(0);
-        t.knowledge = Knowledge::default();
-        t.knowledge.practitioners[Skill::Fishing as usize][2] = 1.;
-        teach(&mut t, 120.);
+        for h in &mut t.people.members {
+            h.skills = Skills::default();
+            h.skills.levels[Skill::Cordage as usize] = 0.5;
+            if h.age(0, 120) >= 15 {
+                h.role = Role::Fisher;
+            }
+        }
+        let elder = t
+            .people
+            .members
+            .iter_mut()
+            .find(|h| h.age(0, 120) >= 50)
+            .unwrap();
+        elder.skills.levels[Skill::Fishing as usize] = 1.;
+        t.teach_workers(0);
+        t.activity(0, Role::Fisher, Skill::Fishing, 0.5, true);
         assert!(t.knowledge.level(Skill::Fishing) > 0.);
         assert!(t.knowledge.practitioners[Skill::Fishing as usize][0] > 0.);
         assert_eq!(t.knowledge.level(Skill::Watercraft), 0.);
@@ -264,6 +412,78 @@ mod tests {
     }
 
     #[test]
+    fn actual_participants_gain_experience_listeners_only_bounded_story_knowledge() {
+        let mut t = world().tribes.remove(0);
+        for h in &mut t.people.members {
+            h.skills = Skills::default();
+            h.role = Role::Dependent;
+        }
+        t.people.members[0].role = Role::Hunter;
+        t.people.members[0].skills.levels[Skill::Tracking as usize] = 0.6;
+        let id = t.people.members[0].id;
+        t.refresh(0);
+        let before = t.knowledge.practitioners[Skill::Tracking as usize];
+        t.activity(1, Role::Hunter, Skill::Tracking, 0.5, false);
+        let hunter = t.people.members.iter().find(|h| h.id == id).unwrap();
+        assert_eq!(hunter.skills.experience[Skill::Tracking as usize], 0.5);
+        assert!(hunter.skills.level(Skill::Tracking) > 0.6);
+        for listener in t.people.members.iter().filter(|h| h.id != id) {
+            assert_eq!(listener.skills.experience[Skill::Tracking as usize], 0.);
+            assert!(listener.skills.level(Skill::Tracking) > 0.);
+            assert!(listener.skills.level(Skill::Tracking) <= 0.6 * LEARNING.story_ceiling);
+        }
+        assert_ne!(before, t.knowledge.practitioners[Skill::Tracking as usize]);
+    }
+
+    #[test]
+    fn jobs_follow_opportunities_and_instruction_spends_both_workers_time() {
+        let mut t = world().tribes.remove(0);
+        t.equipment.stone = t.headcount() as f32;
+        t.equipment.wood = t.headcount() as f32;
+        t.equipment.boat_places = t.headcount() as f32 * 2.;
+        t.assign_roles(
+            0,
+            Opportunities {
+                gathering: 0.,
+                hunting: 10.,
+                fishing: 0.,
+            },
+        );
+        assert_eq!(t.specialists.hunters, t.people.workers());
+        assert_eq!(t.specialists.fishers, 0);
+        for h in &mut t.people.members {
+            h.skills.levels[Skill::Tracking as usize] = 0.;
+        }
+        let teacher = t
+            .people
+            .members
+            .iter_mut()
+            .find(|h| h.role == Role::Hunter)
+            .unwrap();
+        teacher.skills.levels[Skill::Tracking as usize] = 0.2;
+        t.teach_workers(0);
+        let time_spent: f32 = t.people.members.iter().map(|h| 1. - h.work_fraction).sum();
+        assert!((time_spent - 2. * LEARNING.lesson_time).abs() < 0.0001);
+        assert!(
+            t.people
+                .members
+                .iter()
+                .filter(|h| h.skills.level(Skill::Tracking) < 0.2)
+                .all(|h| h.skills.level(Skill::Tracking) <= 0.2 * LEARNING.teacher_ceiling)
+        );
+        t.assign_roles(
+            1,
+            Opportunities {
+                gathering: 0.,
+                hunting: 0.,
+                fishing: 10.,
+            },
+        );
+        assert_eq!(t.specialists.fishers, t.people.workers());
+        assert_eq!(t.specialists.hunters, 0);
+    }
+
+    #[test]
     fn shared_language_increases_actual_transmission_without_erasing_teacher() {
         let t = world().tribes.remove(0);
         let mut gains = [0.; 2];
@@ -275,6 +495,14 @@ mod tests {
                     a.knowledge.seed(s, 0.9);
                     b.knowledge.seed(s, 0.2);
                 }
+                for h in &mut a.people.members {
+                    h.skills.levels = [0.9; 13];
+                }
+                for h in &mut b.people.members {
+                    h.skills.levels = [0.2; 13];
+                }
+                a.refresh(0);
+                b.refresh(0);
                 let before = a.knowledge.clone();
                 if let Some(s) = exchange(&mut a, &mut b, language, &mut Rng::new(seed)) {
                     gains[case] += b.knowledge.level(s) - 0.2;
@@ -358,5 +586,58 @@ mod tests {
             cell.weather.snow = 1.;
         }
         assert!(crossing_candidates(&w, &t).is_empty());
+    }
+
+    #[test]
+    fn skilled_fishing_still_pays_for_search_travel_and_local_depletion() {
+        let mut base = world();
+        base.tribes.truncate(1);
+        let home = base.tribes[0].cell;
+        let neighbor = base.grid.neighbors(home).next().unwrap();
+        for cell in &mut base.cells {
+            cell.resources.aquatic = AquaticLife::default();
+            cell.resources.foraging_pressure = 0.;
+            cell.biome = Biome::Grassland;
+            cell.weather.snow = 0.;
+            cell.weather.precipitation = 0.;
+        }
+        let t = &mut base.tribes[0];
+        t.health = 1.;
+        t.residence_days = 30;
+        t.knowledge.seed(Skill::Fishing, 1.);
+        t.knowledge.seed(Skill::Cordage, 1.);
+        t.equipment.fiber = t.headcount() as f32;
+        base.cells[home as usize].resources.aquatic.freshwater_fish = 5000.;
+        let measure = |mut w: World| {
+            let before = w.totals.fished;
+            daily(&mut w);
+            (w.totals.fished - before, w)
+        };
+        let (full, harvested) = measure(base.clone());
+        assert!(full > 0.);
+        assert!(harvested.cells[home as usize].resources.foraging_pressure > 0.);
+        let mut sparse = base.clone();
+        sparse.cells[home as usize]
+            .resources
+            .aquatic
+            .freshwater_fish = 100.;
+        let (low, _) = measure(sparse);
+        assert!(low < full * 0.5, "search slows before stock is exhausted");
+        let mut depleted = base.clone();
+        depleted.cells[home as usize].resources.foraging_pressure = 2.;
+        assert!(measure(depleted).0 < full * 0.5);
+        let mut distant = base.clone();
+        distant.cells[home as usize]
+            .resources
+            .aquatic
+            .freshwater_fish = 0.;
+        distant.cells[neighbor as usize]
+            .resources
+            .aquatic
+            .freshwater_fish = 5000.;
+        assert!(measure(distant).0 < full);
+        let mut moving = base;
+        moving.tribes[0].residence_days = 0;
+        assert!(measure(moving).0 < full * 0.75);
     }
 }

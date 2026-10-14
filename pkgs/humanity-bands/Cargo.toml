@@ -1,0 +1,11 @@
+[package]
+name = "humanity-bands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+humanity-humans.workspace = true
+humanity-skills.workspace = true
+humanity-cultures.workspace = true
+serde.workspace = true

@@ -62,12 +62,47 @@ struct Args {
     /// Begin the 3D viewer following this band ID (F cycles bands during play).
     #[arg(long, conflicts_with = "headless")]
     follow_band: Option<u32>,
+    /// Open the viewer inspecting this living human and following their current band.
+    #[arg(long, conflicts_with_all = ["headless", "follow_band"])]
+    follow_human: Option<u64>,
+    /// Optional analytics retention in simulated years; omitted means unlimited for new worlds.
+    #[arg(long, conflicts_with_all = ["no_analytics", "analytics_unlimited"], value_parser = clap::value_parser!(u32).range(1..))]
+    analytics_years: Option<u32>,
+    /// Disable optional historical analytics, retaining current state and living biographies.
+    #[arg(long, conflicts_with = "analytics_unlimited")]
+    no_analytics: bool,
+    /// Restore unlimited analytics recording, including when loading a capped/off save.
+    #[arg(long)]
+    analytics_unlimited: bool,
+    /// Print a living individual's complete state and biography from --inspect.
+    #[arg(long, requires = "inspect")]
+    human: Option<u64>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(path) = &args.inspect {
         let world = humanity_save::load(path)?;
+        if let Some(id) = args.human {
+            let (band, human) = world
+                .tribes
+                .iter()
+                .find_map(|t| {
+                    t.people
+                        .members
+                        .iter()
+                        .find(|h| h.id == id)
+                        .map(|h| (t.id, h))
+                })
+                .with_context(|| format!("no living human with ID {id}"))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"band": band, "age": human.age(world.day, world.config.year_days()), "human": human})
+                )?
+            );
+            return Ok(());
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&humanity_save::summary(&world))?
@@ -106,6 +141,13 @@ fn main() -> Result<()> {
         }
         humanity_world::generate(config).map_err(anyhow::Error::msg)?
     };
+    if args.no_analytics {
+        world.set_analytics(humanity_core::AnalyticsPolicy::Off);
+    } else if let Some(years) = args.analytics_years {
+        world.set_analytics(humanity_core::AnalyticsPolicy::Years(years));
+    } else if args.analytics_unlimited {
+        world.set_analytics(humanity_core::AnalyticsPolicy::Unlimited);
+    }
     eprintln!(
         "Planet ready: {} cells, {} tribes, {} herds ({:.2}s)",
         world.cells.len(),
@@ -146,13 +188,27 @@ fn main() -> Result<()> {
         bail!("no living band with ID {id}");
     }
     #[cfg(feature = "graphics")]
+    let following = if let Some(id) = args.follow_human {
+        Some(
+            world
+                .tribes
+                .iter()
+                .find(|t| t.people.members.iter().any(|h| h.id == id))
+                .with_context(|| format!("no living human with ID {id}"))?
+                .id,
+        )
+    } else {
+        args.follow_band
+    };
+    #[cfg(feature = "graphics")]
     if !humanity_view::run(
         world,
         args.save,
         args.paused,
         args.screenshot,
         args.insights,
-        args.follow_band,
+        following,
+        args.follow_human,
     ) {
         bail!("viewer exited with an error");
     }

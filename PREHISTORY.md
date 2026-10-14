@@ -26,9 +26,18 @@ These examples span different places, populations and periods. Living forager so
 
 ## Knowledge lives in populations
 
-Thirteen traditions track **proficient fractions of children, adults and elders**, rather than global unlock flags. Skills overlap. This retains member-to-member transmission without creating millions of person entities.
+Thirteen traditions now track **individual proficiency and practice experience**,
+with derived child/adult/elder band means. Each human has a stable ID, actual birth
+date, personal health, role and biography; rendering remains group-based.
 
-Adults and elders teach; oral teaching knowledge and health affect learning. Children carry learned knowledge into adulthood; adults carry theirs into the elder cohort. Births dilute children's proficiency, practices decay, and sparsely held knowledge can disappear after deaths. Local experiments can seed practices when opportunities and prerequisites exist. Rates compress cultural change for observation; they are not historical invention dates.
+Practice follows actual assigned work, including reduced learning from failed
+attempts. Workers teach apprentices below 80% of their own proficiency, spending
+time on instruction. Accounts of actual activities teach other members more slowly,
+below 35% of the source's proficiency. Practice can exceed these social-learning
+ceilings. These percentages are inspectable prototype assumptions, not measured
+prehistoric teaching rates. Newborns begin untrained; aging transfers no averaged
+skill between people. Local experiments seed one person's knowledge when conditions
+permit. Losing an expert removes their personal skills from the band's capabilities.
 
 Friendly encounters transfer one randomly selected topic from the better-informed band to the other. The chance is `0.04 + 0.66 × language overlap`, with stronger uptake at higher understanding. The nonzero floor represents demonstration and partial communication. Teachers retain knowledge. Contacts also change language mixtures, share provisions/materials, and spread species-specific hunting familiarity. Conflict interrupts these opportunities.
 
@@ -53,9 +62,13 @@ The simulation has three **invented, inherited residential customs**, not named 
 
 River budding tolerates 150 only with fishing proficiency ≥30%, preservation ≥25%, ≥8 stored food-days/person, and accessible non-ocean aquatic biomass ≥30 food-days/person. Low stores (<3 days/person) or health (<65%) lower thresholds by a quarter. Pressure recedes by two days/day below the threshold. Camps above twice their current threshold split immediately and repeatedly as necessary; this also resolves oversized old-save bands on the next simulated day. This is a mobile-camp safeguard, not a claim that settlements or gatherings cannot be larger.
 
-New camps begin at roughly half to five-sixths of their customary threshold, independent of global population. Waterside habitats bias, but do not dictate, river-budding customs. Splinters inherit the custom, languages and cohort proficiency; every sex/age cohort and all carried food/materials/boat capacity are apportioned conservatively. Parentage and unique IDs persist. Population, births and deaths do not change through fission. Two camps initially occupy the same coarse map cell and subsequently migrate with ordinary travel costs.
+New camps begin at roughly half to five-sixths of their customary threshold, independent of global population. Waterside habitats bias, but do not dictate, river-budding customs. Splinters inherit customs and language mixtures, while actual individuals carry their own skills into the new band. Shared provisions and equipment are apportioned conservatively. Parent band IDs and individual identities persist; population, births and deaths do not change through fission. Two camps initially occupy the same coarse map cell and subsequently migrate with ordinary travel costs.
 
-Household membership and pedigrees are not represented: proportional cohorts approximate a mixed-age residential party, not a literal reconstruction of kinship. Residential customs transmit through descent at fission and cultural identity change; inter-band teaching transmits practical skills. Temporary camp fusion and large seasonal assemblies remain future mechanics.
+Individual people now transfer between bands at fission, preserving IDs, birth
+dates, skills and histories. Sex/age-balanced selection still approximates a mixed
+residential party; explicit households and complete pedigrees remain future work.
+Residential customs transmit at fission and cultural identity change. Temporary
+camp fusion and large seasonal assemblies remain future mechanics.
 
 ## Cultural identities and remembered places
 

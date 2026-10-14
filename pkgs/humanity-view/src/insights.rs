@@ -2,6 +2,7 @@
 //! short general-purpose event feed. The overlay remains live as time advances.
 use crate::*;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use humanity_core::AnalyticsPolicy;
 use humanity_core::{DeathCause, PopulationSample};
 
 #[derive(Component)]
@@ -21,6 +22,22 @@ const RANGES: [(&str, u64, bool); 9] = [
 
 #[derive(Component)]
 pub struct RangeButton(usize);
+
+#[derive(Component)]
+pub struct RecordingButton(AnalyticsPolicy);
+
+pub fn analytics_interact(
+    buttons: Query<(&Interaction, &RecordingButton), Changed<Interaction>>,
+    mut game: ResMut<Game>,
+    mut view: ResMut<ViewState>,
+) {
+    for (interaction, button) in &buttons {
+        if *interaction == Interaction::Pressed {
+            game.world.set_analytics(button.0);
+            view.snapshot_revision += 1;
+        }
+    }
+}
 
 pub fn interact(
     buttons: Query<(&Interaction, &RangeButton), Changed<Interaction>>,
@@ -318,11 +335,50 @@ pub fn update(
             },
         );
     }
+    let recording = row(&mut commands, root);
+    label(
+        &mut commands,
+        recording,
+        format!("Recording: {:?}", d.policy),
+        13.,
+        MUTED,
+    );
+    for (text, policy) in [
+        ("Off", AnalyticsPolicy::Off),
+        ("1y", AnalyticsPolicy::Years(1)),
+        ("10y", AnalyticsPolicy::Years(10)),
+        ("100y", AnalyticsPolicy::Years(100)),
+        ("Unlimited", AnalyticsPolicy::Unlimited),
+    ] {
+        let button = commands
+            .spawn((
+                Button,
+                RecordingButton(policy),
+                Node {
+                    padding: UiRect::axes(px(8), px(5)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.09, 0.14, 0.17)),
+            ))
+            .id();
+        commands.entity(recording).add_child(button);
+        label(
+            &mut commands,
+            button,
+            text,
+            13.,
+            if policy == d.policy { GOLD } else { TEXT },
+        );
+    }
     let Some(latest) = d.history.back() else {
         label(
             &mut commands,
             root,
-            "No recorded population history yet. Advance the simulation to collect samples.",
+            if d.policy == AnalyticsPolicy::Off {
+                "Analytics recording is off. Current state and living human histories remain inspectable."
+            } else {
+                "No recorded history yet. Advance time to collect samples."
+            },
             16.,
             TEXT,
         );
@@ -578,7 +634,9 @@ pub fn update(
         format!(
             "Tracking began on day {}. Up to {} daily samples / {} death groups kept.\nCharts show available history only; years use this planet's calendar.",
             d.since_day.unwrap_or(w.day),
-            humanity_core::history_capacity(w.config.year_days()),
+            d.policy
+                .capacity(w.config.year_days())
+                .map_or("unlimited".into(), |n| n.to_string()),
             humanity_core::DEATH_RECORDS
         ),
         12.,
@@ -640,6 +698,7 @@ mod tests {
             seed: 42,
         })
         .unwrap();
+        world.set_analytics(AnalyticsPolicy::Years(100));
         for day in 1..=12_100 {
             world.day = day;
             world.totals.deaths = day * 2;

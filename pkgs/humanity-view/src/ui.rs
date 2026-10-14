@@ -167,6 +167,48 @@ pub fn update(
                     animals
                 );
                 let r = &c.resources;
+                if let Some(human_id) = view.selected_human
+                    && let Some((t, h)) = w.tribes.iter().find_map(|t| {
+                        t.people
+                            .members
+                            .iter()
+                            .find(|h| h.id == human_id)
+                            .map(|h| (t, h))
+                    })
+                {
+                    let mut personal = format!(
+                        "HUMAN {} / {:?} / age {}\nBand {} / {:?} / health {:.0}%\n\nPERSONAL SKILLS (level / practiced days)\n",
+                        h.id,
+                        h.sex,
+                        h.age(w.day, w.config.year_days()),
+                        t.id,
+                        h.role,
+                        h.health * 100.
+                    );
+                    for skill in humanity_core::Skill::ALL {
+                        let i = skill as usize;
+                        personal.push_str(&format!(
+                            "{}: {:.1} / {:.1}d\n  taught +{:.1}, stories +{:.1}\n",
+                            skill.label(),
+                            h.skills.level(skill) * 100.,
+                            h.skills.experience[i],
+                            h.skills.taught[i] * 100.,
+                            h.skills.stories[i] * 100.
+                        ));
+                    }
+                    personal.push_str("\nRECENT PERSONAL HISTORY\n");
+                    for e in h.history.iter().rev().take(12) {
+                        personal.push_str(&format!("D{}: {:?}\n", e.day, e.kind));
+                    }
+                    personal.push('\n');
+                    personal.push_str(&body);
+                    body = personal;
+                }
+                body.push_str(&format!(
+                    "Near-camp depletion {:.2} / search yield {:.0}%\n",
+                    r.foraging_pressure,
+                    100. / (1. + r.foraging_pressure)
+                ));
                 body.push_str(&format!("\nAQUATIC FOOD (person-days)\nFreshwater fish {:.0}\nCoastal / pelagic fish {:.0}\nShellfish {:.0}\n\nCRAFT MATERIALS\nWood {:.0} / Fiber {:.0}\nToolstone availability {:.0}%\n",
                     r.aquatic.freshwater_fish, r.aquatic.coastal_fish, r.aquatic.shellfish, r.wood, r.fiber, r.toolstone*100.));
                 for h in w.herds.iter().filter(|h| h.cell == id) {
@@ -217,11 +259,11 @@ pub fn update(
                     if let Some(parent) = t.parent_band {
                         body.push_str(&format!("Offshoot of band {parent}\n"));
                     }
-                    body.push_str(&format!("\nBAND {}   /   {} people\nHealth {:.0}%  /  food {:.1} days\nFemale {}  /  Male {}\nYoung {}  /  Adult {}  /  Elder {}\nHunters {}  /  Gatherers {}\nHealers {}  /  Guides {}\nLanguage families\n{}\n{} band(s) share this cell",
+                    body.push_str(&format!("\nBAND {}   /   {} people\nHealth {:.0}%  /  food {:.1} days\nFemale {}  /  Male {}\nYoung {}  /  Adult {}  /  Elder {}\nHunters {}  /  Gatherers {} / Fishers {}\nHealers {}  /  Guides {}\nLanguage families\n{}\n{} band(s) share this cell",
                         t.id, t.headcount(), t.health * 100., t.food / t.headcount().max(1) as f32,
                         t.people.female.iter().sum::<u32>(), t.people.male.iter().sum::<u32>(), children, t.people.adults(), elders,
-                        t.specialists.hunters, t.specialists.gatherers, t.specialists.healers, t.specialists.guides, languages, people.len()));
-                    body.push_str(&format!("\n\nLIVELIHOOD / KNOWLEDGE\nFishing effort today {:.0}%\nBoat places {:.0} / {} people\nCarried wood {:.0} / fiber {:.0}\nStone {:.0} / hides {:.0}\n\nProficient: child / adult / elder\n",
+                         t.specialists.hunters, t.specialists.gatherers, t.specialists.fishers, t.specialists.healers, t.specialists.guides, languages, people.len()));
+                    body.push_str(&format!("\n\nLIVELIHOOD / KNOWLEDGE\nFishing workers today {:.0}%\nBoat places {:.0} / {} people\nCarried wood {:.0} / fiber {:.0}\nStone {:.0} / hides {:.0}\n\nMean skill: child / adult / elder\n",
                         t.fishing_effort*100., t.equipment.boat_places,t.headcount(),t.equipment.wood,t.equipment.fiber,t.equipment.stone,t.equipment.hides));
                     for skill in Skill::ALL {
                         let k = t.knowledge.practitioners[skill as usize];

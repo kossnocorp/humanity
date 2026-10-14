@@ -339,50 +339,7 @@ pub fn fission(world: &mut World) {
 }
 
 fn split(parent: &mut Tribe, id: u32, departing: u32) -> Tribe {
-    let n = parent.headcount();
-    let mut child = parent.clone();
-    child.id = id;
-    child.parent_band = Some(parent.id);
-    parent.camp_pressure_days = 0;
-    child.camp_pressure_days = 0;
-    // Cumulative integer apportionment conserves every sex/age cohort exactly,
-    // with at most one person's rounding error per cohort. Families are not
-    // individually represented; both parties inherit the cohort's proficiency.
-    let mut cumulative = 0_u64;
-    let mut assigned = 0_u64;
-    for (source, destination) in parent
-        .people
-        .female
-        .iter_mut()
-        .chain(&mut parent.people.male)
-        .zip(child.people.female.iter_mut().chain(&mut child.people.male))
-    {
-        cumulative += u64::from(*source);
-        let total = cumulative * u64::from(departing) / u64::from(n);
-        *destination = (total - assigned) as u32;
-        *source -= *destination;
-        assigned = total;
-    }
-    let fraction = departing as f32 / n as f32;
-    for (source, destination) in [
-        (&mut parent.food, &mut child.food),
-        (&mut parent.equipment.wood, &mut child.equipment.wood),
-        (&mut parent.equipment.fiber, &mut child.equipment.fiber),
-        (&mut parent.equipment.stone, &mut child.equipment.stone),
-        (&mut parent.equipment.hides, &mut child.equipment.hides),
-        (
-            &mut parent.equipment.boat_places,
-            &mut child.equipment.boat_places,
-        ),
-    ] {
-        *destination = *source * fraction;
-        *source -= *destination;
-    }
-    parent.specialists = Specialists::from_adults(parent.people.adults());
-    child.specialists = Specialists::from_adults(child.people.adults());
-    // Two camps may occupy one coarse cell; subsequent ordinary movement pays
-    // actual travel costs. Fission grants no teleportation or bonus provisions.
-    child
+    parent.split_off(id, departing)
 }
 
 #[cfg(test)]
@@ -422,10 +379,14 @@ mod tests {
             w.tribes.truncate(1);
             let t = &mut w.tribes[0];
             t.camp_tradition = tradition;
-            t.people = Demography {
-                female: [151, 311, 43],
-                male: [157, 297, 44],
-            };
+            t.people = Demography::from_counts(
+                [151, 311, 43],
+                [157, 297, 44],
+                w.config.year_days(),
+                &mut w.next_human_id,
+            );
+            t.people.seed_skills(&t.knowledge, t.id);
+            t.refresh(0);
             t.food = 10_000.;
             t.equipment = Equipment {
                 wood: 512.,
@@ -470,14 +431,24 @@ mod tests {
                 assert_eq!(t.cell, original.cell);
                 assert_eq!(t.culture, original.culture);
                 assert_eq!(t.camp_tradition, tradition);
-                assert_eq!(t.knowledge.practitioners, original.knowledge.practitioners);
+                for h in &t.people.members {
+                    let source = original
+                        .people
+                        .members
+                        .iter()
+                        .find(|p| p.id == h.id)
+                        .unwrap();
+                    assert_eq!(h.skills.levels, source.skills.levels);
+                    assert_eq!(h.birth_day, source.birth_day);
+                }
                 assert_eq!(t.travel, original.travel);
-                assert_eq!(
+                assert!(
                     t.specialists.hunters
                         + t.specialists.gatherers
+                        + t.specialists.fishers
                         + t.specialists.healers
-                        + t.specialists.guides,
-                    t.people.adults()
+                        + t.specialists.guides
+                        <= t.headcount()
                 );
             }
         }
@@ -489,10 +460,12 @@ mod tests {
         w.tribes.truncate(1);
         let t = &mut w.tribes[0];
         t.camp_tradition = CampTradition::Balanced;
-        t.people = Demography {
-            female: [10, 25, 5],
-            male: [10, 25, 5],
-        };
+        t.people = Demography::from_counts(
+            [10, 25, 5],
+            [10, 25, 5],
+            w.config.year_days(),
+            &mut w.next_human_id,
+        );
         t.food = 800.;
         for _ in 1..CampTradition::Balanced.pressure_days() {
             fission(&mut w);

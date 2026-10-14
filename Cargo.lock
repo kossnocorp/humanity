@@ -2414,6 +2414,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "humanity-bands"
+version = "0.1.0"
+dependencies = [
+ "humanity-cultures",
+ "humanity-humans",
+ "humanity-skills",
+ "serde",
+]
+
+[[package]]
 name = "humanity-cli"
 version = "0.1.0"
 dependencies = [
@@ -2431,8 +2441,12 @@ dependencies = [
 name = "humanity-core"
 version = "0.1.0"
 dependencies = [
+ "humanity-bands",
  "humanity-cultures",
  "humanity-grid",
+ "humanity-humans",
+ "humanity-nutrition",
+ "humanity-skills",
  "serde",
 ]
 
@@ -2450,6 +2464,21 @@ dependencies = [
  "glam",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "humanity-humans"
+version = "0.1.0"
+dependencies = [
+ "humanity-skills",
+ "serde",
+]
+
+[[package]]
+name = "humanity-nutrition"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2472,6 +2501,13 @@ dependencies = [
  "humanity-core",
  "humanity-world",
  "serde_json",
+]
+
+[[package]]
+name = "humanity-skills"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

@@ -36,6 +36,7 @@ pub fn controls(
         view.drag_start = None;
     }
     if keys.just_pressed(KeyCode::Escape) {
+        view.selected_human = None;
         view.insights_open = false;
         if let Some(id) = view.following
             && let Some(i) = game.world.tribes.iter().position(|t| t.id == id)
@@ -81,6 +82,7 @@ pub fn controls(
                 view.accumulator = 0.;
                 view.dirty = true;
                 view.selected = None;
+                view.selected_human = None;
                 view.following = None;
                 view.status = format!("Loaded day {} / paused", game.world.day);
             }
@@ -108,6 +110,7 @@ pub fn controls(
         view.focus_index = (view.focus_index + 1) % game.world.tribes.len();
         let tribe = &game.world.tribes[view.focus_index];
         view.following = Some(tribe.id);
+        view.selected_human = None;
         view.selected = Some(tribe.cell);
         view.distance = PLANET_RADIUS
             + (map::cell_spacing(&game.world) * 12.)
@@ -189,6 +192,7 @@ pub fn controls(
         {
             view.selected = map::screen_to_sphere(p, size, view.orbit, view.distance)
                 .map(|p| game.world.grid.nearest(p));
+            view.selected_human = None;
             view.following = None;
             view.dirty = true;
         }

@@ -11,12 +11,16 @@ license = "MIT OR Apache-2.0"
 humanity-grid = { path = "pkgs/humanity-grid" }
 humanity-core = { path = "pkgs/humanity-core" }
 humanity-cultures = { path = "pkgs/humanity-cultures" }
+humanity-skills = { path = "pkgs/humanity-skills" }
+humanity-humans = { path = "pkgs/humanity-humans" }
+humanity-bands = { path = "pkgs/humanity-bands" }
+humanity-nutrition = { path = "pkgs/humanity-nutrition" }
 humanity-world = { path = "pkgs/humanity-world" }
 humanity-sim = { path = "pkgs/humanity-sim" }
 humanity-save = { path = "pkgs/humanity-save" }
 humanity-view = { path = "pkgs/humanity-view" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 anyhow = "1"
 
 [profile.dev]

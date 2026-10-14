@@ -63,8 +63,12 @@ fn climates_and_dense_populations_keep_valid_stocks_and_accounting() {
             );
             let s = &t.specialists;
             assert_eq!(
-                s.hunters + s.gatherers + s.healers + s.guides,
-                t.people.adults()
+                s.hunters + s.gatherers + s.fishers + s.healers + s.guides,
+                t.people
+                    .members
+                    .iter()
+                    .filter(|h| h.role != Role::Dependent)
+                    .count() as u32
             );
             assert!(!w.cells[t.cell as usize].biome.water());
         }

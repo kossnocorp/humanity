@@ -55,6 +55,7 @@ impl Layer {
 struct ViewState {
     paused: bool,
     speed: f32,
+    selected_human: Option<u64>,
     chart_range: usize,
     accumulator: f32,
     save_path: PathBuf,
@@ -88,7 +89,9 @@ pub fn run(
     screenshot: Option<PathBuf>,
     insights_open: bool,
     following: Option<u32>,
+    selected_human: Option<u64>,
 ) -> bool {
+    let navigation = navigation::initial(&world, selected_human);
     App::new()
         .insert_resource(ClearColor(Color::srgb(0.035, 0.06, 0.085)))
         .insert_resource(Game {
@@ -98,6 +101,7 @@ pub fn run(
         .insert_resource(ViewState {
             paused,
             speed: 4.,
+            selected_human,
             chart_range: 0,
             accumulator: 0.,
             save_path,
@@ -121,7 +125,7 @@ pub fn run(
             snapshot_revision: 0,
             orbit: Quat::IDENTITY,
             distance: PLANET_RADIUS * 3.2,
-            navigation: navigation::Navigator::default(),
+            navigation,
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -144,6 +148,7 @@ pub fn run(
                 ui::scroll,
                 navigation::update,
                 insights::interact,
+                insights::analytics_interact,
                 insights::update,
                 insights::scroll,
                 capture_frame,
@@ -155,6 +160,24 @@ pub fn run(
 }
 
 fn tick(time: Res<Time>, mut game: ResMut<Game>, mut view: ResMut<ViewState>) {
+    if let Some(id) = view.selected_human {
+        if let Some((i, t)) = game
+            .world
+            .tribes
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.people.members.iter().any(|h| h.id == id))
+        {
+            if view.following.is_some() {
+                view.following = Some(t.id);
+                view.focus_index = i;
+            }
+        } else {
+            view.selected_human = None;
+            view.status =
+                format!("Human {id} has died; their individual record is no longer retained.");
+        }
+    }
     if view.paused {
         return;
     }

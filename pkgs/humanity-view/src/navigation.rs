@@ -8,15 +8,23 @@ use std::collections::BTreeMap;
 pub enum Tab {
     #[default]
     Bands,
+    Humans,
     Camps,
     Cultures,
     Languages,
 }
 impl Tab {
-    const ALL: [Self; 4] = [Self::Bands, Self::Camps, Self::Cultures, Self::Languages];
+    const ALL: [Self; 5] = [
+        Self::Bands,
+        Self::Humans,
+        Self::Camps,
+        Self::Cultures,
+        Self::Languages,
+    ];
     fn label(self) -> &'static str {
         match self {
             Self::Bands => "Bands",
+            Self::Humans => "Humans",
             Self::Camps => "Camps",
             Self::Cultures => "Cultures",
             Self::Languages => "Languages",
@@ -27,6 +35,7 @@ impl Tab {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Key {
     Band(u32),
+    Human(u64),
     Camp(u64),
     Culture(u32),
     Language(u32),
@@ -97,6 +106,29 @@ fn band_matches(t: &Tribe, filter: Option<Filter>) -> bool {
 
 fn rows(world: &World, tab: Tab, filter: Option<Filter>) -> Vec<Row> {
     match tab {
+        Tab::Humans => {
+            let mut humans: Vec<_> = world
+                .tribes
+                .iter()
+                .flat_map(|t| t.people.members.iter().map(move |h| (t, h)))
+                .collect();
+            humans.sort_by_key(|(_, h)| h.id);
+            humans
+                .into_iter()
+                .map(|(t, h)| Row {
+                    key: Key::Human(h.id),
+                    label: format!(
+                        "Human {} / {:?} / age {}\n{:?} / Band {} / health {:.0}%",
+                        h.id,
+                        h.sex,
+                        h.age(world.day, world.config.year_days()),
+                        h.role,
+                        t.id,
+                        h.health * 100.
+                    ),
+                })
+                .collect()
+        }
         Tab::Bands => {
             let mut bands: Vec<_> = world
                 .tribes
@@ -204,7 +236,25 @@ fn refresh(world: &World, nav: &mut Navigator) {
     nav.last_day = world.day;
 }
 
+pub fn initial(world: &World, human: Option<u64>) -> Navigator {
+    let mut nav = Navigator {
+        revision: 0,
+        ..Navigator::default()
+    };
+    if let Some(id) = human {
+        nav.tab = Tab::Humans;
+        refresh(world, &mut nav);
+        nav.cursor = nav
+            .rows
+            .iter()
+            .position(|r| r.key == Key::Human(id))
+            .unwrap_or(0);
+    }
+    nav
+}
+
 fn focus(world: &World, view: &mut ViewState, cell: CellId) {
+    view.selected_human = None;
     view.selected = Some(cell);
     view.following = None;
     view.orbit = (Quat::from_rotation_arc(view.orbit * Vec3::Z, world.grid.direction(cell))
@@ -218,6 +268,21 @@ fn focus(world: &World, view: &mut ViewState, cell: CellId) {
 
 fn activate(world: &World, view: &mut ViewState, key: Key) {
     match key {
+        Key::Human(id) => {
+            if let Some((i, t)) = world
+                .tribes
+                .iter()
+                .enumerate()
+                .find(|(_, t)| t.people.members.iter().any(|h| h.id == id))
+            {
+                focus(world, view, t.cell);
+                view.following = Some(t.id);
+                view.focus_index = i;
+                view.selected_human = Some(id);
+                view.status =
+                    format!("Inspecting Human {id}; skills and biography in field notes.");
+            }
+        }
         Key::Band(id) => {
             if let Some((i, t)) = world.tribes.iter().enumerate().find(|(_, t)| t.id == id) {
                 focus(world, view, t.cell);
@@ -498,6 +563,8 @@ pub fn update(
             p.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 column_gap: px(3),
+                row_gap: px(3),
+                flex_wrap: FlexWrap::Wrap,
                 ..default()
             })
             .with_children(|p| {
@@ -628,6 +695,35 @@ mod tests {
         assert_eq!(view.selected, Some(w.tribes[0].cell));
         action(&w, &mut view, Action::Back);
         assert!(view.navigation.tab == Tab::Camps && view.navigation.filter.is_none());
+    }
+
+    #[test]
+    fn individual_browser_tracks_identity_after_a_band_split() {
+        let mut w = world();
+        let human = w.tribes[0].people.members[0].id;
+        let mut view = ViewState::default();
+        activate(&w, &mut view, Key::Human(human));
+        assert_eq!(view.selected_human, Some(human));
+        assert_eq!(view.following, Some(w.tribes[0].id));
+        let next = w.next_band_id as u32;
+        let count = w.tribes[0].headcount() / 2;
+        let child = w.tribes[0].split_off(next, count);
+        w.next_band_id += 1;
+        w.tribes.push(child);
+        activate(&w, &mut view, Key::Human(human));
+        let owner = w
+            .tribes
+            .iter()
+            .find(|t| t.people.members.iter().any(|h| h.id == human))
+            .unwrap();
+        assert_eq!(view.following, Some(owner.id));
+        assert_eq!(
+            rows(&w, Tab::Humans, None)
+                .iter()
+                .filter(|r| r.key == Key::Human(human))
+                .count(),
+            1
+        );
     }
 
     #[test]

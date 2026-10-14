@@ -2,6 +2,21 @@
 //! These are fictional strategies, not historical peoples or a progress ladder.
 use serde::{Deserialize, Serialize};
 
+/// A shared cultural identity, independent of individual people and residential bands.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Culture {
+    /// Stable world index; extinct identities remain as ancestry.
+    pub id: u32,
+    /// Inspectable identity name.
+    pub name: String,
+    /// Cultural strategy/preferences.
+    pub variant: CultureVariant,
+    /// Zero, one or two ancestral cultural identities.
+    pub parents: Vec<u32>,
+    /// Day this identity formed.
+    pub founded: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CampTradition {
     /// Favors small camps: crowding releases a capped party rather than dividing equally.

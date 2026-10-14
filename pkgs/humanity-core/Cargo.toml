@@ -7,4 +7,8 @@ license.workspace = true
 [dependencies]
 humanity-grid.workspace = true
 humanity-cultures.workspace = true
+humanity-humans.workspace = true
+humanity-bands.workspace = true
+humanity-skills.workspace = true
+humanity-nutrition.workspace = true
 serde.workspace = true

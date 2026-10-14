@@ -1,9 +1,25 @@
 use crate::*;
 use std::collections::VecDeque;
 
-/// Daily samples for a full century, plus the starting cumulative-count baseline.
-pub fn history_capacity(year_days: u32) -> usize {
-    year_days as usize * 100 + 1
+/// Optional world-analytics retention, independent of living people's biographies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnalyticsPolicy {
+    /// Keep all optional historical samples; experimentation default.
+    #[default]
+    Unlimited,
+    /// Keep at most this many simulated years plus a cumulative-count baseline.
+    Years(u32),
+    /// Keep current counters and living biographies, but no optional global history.
+    Off,
+}
+impl AnalyticsPolicy {
+    pub fn capacity(self, year_days: u32) -> Option<usize> {
+        match self {
+            Self::Unlimited => None,
+            Self::Years(n) => Some(n as usize * year_days as usize + 1),
+            Self::Off => Some(0),
+        }
+    }
 }
 pub const DEATH_RECORDS: usize = 128;
 
@@ -91,6 +107,8 @@ pub struct DeathRecord {
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct PopulationInsights {
+    /// Persisted retention policy, independent of human histories and simulation mechanics.
+    pub policy: AnalyticsPolicy,
     pub since_day: Option<u64>,
     pub deaths: DeathCounts,
     pub history: VecDeque<PopulationSample>,
@@ -102,6 +120,9 @@ impl PopulationInsights {
             return;
         }
         self.deaths.add(cause, count);
+        if self.policy == AnalyticsPolicy::Off {
+            return;
+        }
         if self.recent_deaths.len() == DEATH_RECORDS {
             self.recent_deaths.pop_front();
         }
@@ -120,10 +141,46 @@ impl PopulationInsights {
 }
 
 impl World {
+    pub fn set_analytics(&mut self, policy: AnalyticsPolicy) {
+        let previous = self.insights.policy;
+        self.insights.policy = policy;
+        if policy == AnalyticsPolicy::Off {
+            self.insights.history.clear();
+            self.insights.history.shrink_to_fit();
+            self.insights.recent_deaths.clear();
+            self.insights.recent_deaths.shrink_to_fit();
+            self.events.clear();
+            self.events.shrink_to_fit();
+        } else {
+            if previous == AnalyticsPolicy::Off {
+                self.insights.since_day = Some(self.day);
+            }
+            self.record_population();
+            self.trim_analytics();
+            self.insights.history.shrink_to_fit();
+            self.insights.recent_deaths.shrink_to_fit();
+            self.events.shrink_to_fit();
+        }
+    }
+    fn trim_analytics(&mut self) {
+        if let AnalyticsPolicy::Years(years) = self.insights.policy {
+            let start = self
+                .day
+                .saturating_sub(u64::from(years) * u64::from(self.config.year_days()));
+            while self.insights.history.front().is_some_and(|s| s.day < start) {
+                self.insights.history.pop_front();
+            }
+            self.insights.recent_deaths.retain(|e| e.day >= start);
+            self.events.retain(|e| e.day >= start);
+        }
+    }
     /// No simulation RNG is consumed by instrumentation.
     pub fn record_population(&mut self) {
         if self.insights.since_day.is_none() {
             self.insights.since_day = Some(self.day);
+        }
+        if self.insights.policy == AnalyticsPolicy::Off {
+            return;
         }
         let mut sample = PopulationSample {
             day: self.day,
@@ -158,9 +215,7 @@ impl World {
         {
             self.insights.history.pop_back();
         }
-        while self.insights.history.len() >= history_capacity(self.config.year_days()) {
-            self.insights.history.pop_front();
-        }
         self.insights.history.push_back(sample);
+        self.trim_analytics();
     }
 }

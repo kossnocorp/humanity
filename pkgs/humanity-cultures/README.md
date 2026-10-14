@@ -50,6 +50,15 @@ Cultures remember at most 12 places. Fishing sites attract return all year; resi
 
 ### Decay and maintenance (`SOCIAL`)
 
+Food security is constrained by `FORAGING` in `humanity-nutrition/src/rules.rs`
+and `CLIMATE` in `humanity-world/src/climate.rs`:
+stock-density search, a shared near-camp depletion index (4,000 harvested person-days
+per standard cell adds one unit), recovery over half a season, distance-costed
+single-patch fishing, and half working time during relocation. Seeded interannual
+rainfall changes soil moisture, recharge and freshwater capacity. These parameters
+are ecological modelling assumptions, not fitted death-cause percentages. See
+`../../docs/research/deaths.md` for research and long-run comparisons.
+
 | Parameter | Default | Effect |
 |---|---:|---|
 | `residential_site_decay_years` | 3 | Years to lose one condition unit without maintenance |

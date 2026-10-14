@@ -2,7 +2,9 @@
 
 - Rust / Bevy Civilization-inspired planetary simulation, beginning with mobile hunter-gatherers, before settlements. Procedural planets, not Earth.
 - The planet is a real 3D sphere in both rendering and simulation topology. Predominantly hexagonal cells; necessary non-hexagonal cells are acceptable.
-- Cargo monorepo: dedicated `humanity-*` crates under `pkgs/`. Keep simulation independent of rendering; prioritize fast incremental builds and large aggregate populations over individual-person entities.
+- Cargo monorepo: dedicated `humanity-*` crates under `pkgs/`. Keep simulation independent of rendering; prioritize fast incremental builds and scalable populations.
+- Start with individual human records and independent ages/skills for detailed stories, without requiring individual render entities. Support later aggregation as population and social complexity grow; keep human state separate from band/group state.
+- Experimentation takes priority over premature efficiency. Analytics must default to unlimited retention, support a year cap or off mode, and preserve current inspection/living-human histories. Defer binary saves until measured costs warrant them.
 - Geography, climate, seasons, ecology, migration, tribal demographics/languages, and probabilistic events must interact. Seeded headless runs and inspectable saves are first-class.
 - Bands share evolving cultures; isolation and mixing can form new identities. Remembered camps support multi-season use and decay without visits/upkeep. Keep cultural variants and tuning parameters inspectable in a dedicated crate. Existing-save compatibility is not required.
 - Until the user explicitly says otherwise, discard old save formats: no backward compatibility, migrations, or fallback initialization for missing save data. Require fresh saves when the format changes.

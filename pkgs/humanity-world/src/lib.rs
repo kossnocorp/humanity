@@ -1,5 +1,7 @@
 //! Periodic planetary terrain, priority-flood drainage, climate and standing ecology.
 use humanity_core::*;
+pub mod climate;
+use climate::CLIMATE;
 use humanity_grid::Grid;
 use noise::{NoiseFn, OpenSimplex};
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -49,6 +51,7 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
                 },
                 resources: Resources {
                     plants: 0.,
+                    foraging_pressure: 0.,
                     fruit: 0.,
                     game: 0.,
                     grazing: 0.,
@@ -107,6 +110,7 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
         herds: Vec::new(),
         tribes: Vec::new(),
         next_band_id: 0,
+        next_human_id: 0,
         cultures: Vec::new(),
         sites: Vec::new(),
         next_site_id: 0,
@@ -117,6 +121,10 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
     update_environment(&mut world, true);
     populate(&mut world)?;
     initialize_cultures(&mut world);
+    for t in &mut world.tribes {
+        t.people.seed_skills(&t.knowledge, t.id);
+        t.refresh(0);
+    }
     world.record_population();
     Ok(world)
 }
@@ -183,13 +191,29 @@ pub fn update_environment(world: &mut World, initialize: bool) {
     let day = (world.day % 1_000_000) as f32;
     let (wind_sin, wind_cos) = (day * 0.13).sin_cos();
     let front = (day * 0.09).sin();
+    // Slow, spatially coherent wet/dry spells persist across seasons. Seeded
+    // phases use a separate stream: climate does not consume gameplay RNG.
+    let mut climate_rng = Rng::new(c.seed ^ 0x434c_494d_4154_4500);
+    let climate_phase = climate_rng.unit() * std::f32::consts::TAU;
+    let years = world.day as f64 / f64::from(c.year_days());
+    let slow = (years * std::f64::consts::TAU / CLIMATE.periods[0] + f64::from(climate_phase)).sin()
+        as f32;
+    let regional = (years * std::f64::consts::TAU / CLIMATE.periods[1]
+        + f64::from(climate_phase) * 2.)
+        .sin() as f32;
     for (id, cell) in world.cells.iter_mut().enumerate() {
         let p = world.grid.direction(id as u32);
+        cell.resources.foraging_pressure *=
+            (-1. / (c.season_days as f32 * FORAGING.patch_recovery_seasons)).exp();
         let base = c.temperature - 52. * world.grid.cooling(id as u32)
             + seasonal * world.grid.latitude(id as u32);
         let storm = ((p.x * wind_cos + p.z * wind_sin) * 0.7 + (p.y * front).abs() * 0.3).max(0.);
         let t = base - cell.elevation.max(0) as f32 * 0.0065 + (storm - 0.3) * 5.;
-        let precipitation = storm * cell.moisture * 8. * c.rainfall;
+        let wetness = (1.
+            + slow * CLIMATE.amplitudes[0]
+            + regional * (p.x * CLIMATE.amplitudes[1] + p.z * CLIMATE.amplitudes[2]))
+            .clamp(CLIMATE.rainfall_bounds[0], CLIMATE.rainfall_bounds[1]);
+        let precipitation = storm * cell.moisture * 8. * c.rainfall * wetness;
         let w = &mut cell.weather;
         w.temperature = t;
         w.precipitation = precipitation;
@@ -198,7 +222,11 @@ pub fn update_environment(world: &mut World, initialize: bool) {
         w.soil_moisture = (w.soil_moisture
             + precipitation * 0.007
             + melt * 0.1
-            + if cell.river > 0. { 0.007 } else { 0. }
+            + if cell.river > 0. {
+                0.007 * wetness * c.rainfall
+            } else {
+                0.
+            }
             - (0.003 + t.max(0.) * 0.00025))
             .clamp(0.02, 1.);
         renew_subsistence(cell, area * world.grid.area_factor(id as u32), initialize);
@@ -308,7 +336,12 @@ fn populate(world: &mut World) -> Result<(), String> {
             n * 30 / 100,
             n - female.iter().sum::<u32>() - n * 15 / 100 - n * 30 / 100,
         ];
-        let people = Demography { female, male };
+        let people = Demography::from_counts(
+            female,
+            male,
+            world.config.year_days(),
+            &mut world.next_human_id,
+        );
         let specialists = Specialists::from_adults(people.adults());
         // Language affinity follows spherical distance, including across poles.
         let p = world.grid.direction(id);
@@ -465,7 +498,12 @@ pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
         }
     }
     for species in Species::ALL {
-        k.prey[species.index()] = (0.15 + species.habitat(c) * 0.015).clamp(0.02, 0.5);
+        k.prey[species.index()] = (0.15
+            + species.habitat(
+                matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest),
+                c.elevation,
+            ) * 0.015)
+            .clamp(0.02, 0.5);
     }
     k
 }
@@ -474,11 +512,12 @@ pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
 pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
     let t = cell.weather.temperature;
     let productivity = ((t + 12.) / 25.).clamp(0.08, 1.) * ((48. - t) / 15.).clamp(0.05, 1.);
-    let fresh = if cell.biome == Biome::Lake {
+    let fresh = (if cell.biome == Biome::Lake {
         1.
     } else {
         (cell.river / 30.).min(1.)
-    };
+    }) * (CLIMATE.freshwater_refuge
+        + (1. - CLIMATE.freshwater_refuge) * cell.weather.soil_moisture);
     let coast = match cell.biome {
         Biome::Sea => 1.,
         Biome::Ocean => 0.12,
@@ -529,6 +568,30 @@ pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resting_patches_recover_and_freshwater_depends_on_hydrology() {
+        let mut w = generate(config()).unwrap();
+        let cell = w.tribes[0].cell as usize;
+        w.cells[cell].resources.foraging_pressure = 2.;
+        let rng = w.rng.state;
+        for _ in 0..w.config.season_days {
+            w.day += 1;
+            update_environment(&mut w, false);
+        }
+        assert!(w.cells[cell].resources.foraging_pressure < 0.3);
+        assert_eq!(w.rng.state, rng, "climate must not consume gameplay RNG");
+        let mut wet = w.cells[cell].clone();
+        wet.biome = Biome::Lake;
+        wet.weather.temperature = 20.;
+        wet.weather.soil_moisture = 1.;
+        let mut dry = wet.clone();
+        dry.weather.soil_moisture = 0.;
+        renew_subsistence(&mut wet, 1., true);
+        renew_subsistence(&mut dry, 1., true);
+        assert!(
+            dry.resources.aquatic.freshwater_fish < wet.resources.aquatic.freshwater_fish * 0.2
+        );
+    }
     fn config() -> PlanetConfig {
         PlanetConfig {
             resolution: 12,

@@ -1,14 +1,19 @@
-//! Compact, renderer-independent state. One cell is an area; people are cohorts.
+//! Renderer-independent world composition. Domain state lives in dedicated crates.
 use serde::{Deserialize, Serialize};
-mod culture;
 mod insights;
 mod sites;
-pub use culture::*;
+pub use humanity_bands::{Equipment, Language, Opportunities, Specialists, Tribe, understanding};
+pub use humanity_cultures::{CampTradition, Culture, CultureVariant, Residence, SOCIAL};
+pub use humanity_humans::*;
+pub use humanity_nutrition::hunting::{Herd, Species};
+pub use humanity_nutrition::{AquaticLife, FORAGING, Resources, encounter};
+pub use humanity_nutrition::{consumption, fishing, foraging, hunting};
+pub use humanity_skills::{Knowledge, LEARNING, Skill, Skills};
 pub use insights::*;
 pub use sites::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 6;
+pub const SAVE_VERSION: u32 = 8;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,6 +78,14 @@ impl PlanetConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rng {
     pub state: u64,
+}
+impl humanity_humans::RandomSource for Rng {
+    fn index(&mut self, length: usize) -> usize {
+        Rng::index(self, length)
+    }
+    fn unit(&mut self) -> f32 {
+        Rng::unit(self)
+    }
 }
 impl Rng {
     pub fn new(seed: u64) -> Self {
@@ -143,25 +156,6 @@ pub struct Weather {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Resources {
-    /// Renewable standing stocks, in edible person-days except grazing (animal-days).
-    pub plants: f32,
-    pub fruit: f32,
-    pub game: f32,
-    pub grazing: f32,
-    pub aquatic: AquaticLife,
-    pub wood: f32,
-    pub fiber: f32,
-    /// Accessible toolstone availability, 0..1 (outcrop, not a renewable food).
-    pub toolstone: f32,
-}
-impl Resources {
-    pub fn edible(&self) -> f32 {
-        self.plants + self.fruit + self.game
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cell {
     pub elevation: i32,
     pub biome: Biome,
@@ -171,131 +165,6 @@ pub struct Cell {
     pub river: f32,
     pub weather: Weather,
     pub resources: Resources,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(usize)]
-pub enum Species {
-    Reindeer,
-    Bison,
-    Antelope,
-    Deer,
-    Boar,
-    Ibex,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Herd {
-    pub id: u32,
-    pub cell: CellId,
-    pub species: Species,
-    pub animals: u32,
-    pub condition: f32,
-    pub travel: f32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Language {
-    pub family: u32,
-    pub share: f32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Demography {
-    /// Female / male cohorts: children (<15), adults (15–49), elders (50+).
-    pub female: [u32; 3],
-    pub male: [u32; 3],
-}
-impl Demography {
-    pub fn total(&self) -> u32 {
-        self.female.iter().chain(&self.male).sum()
-    }
-    pub fn adults(&self) -> u32 {
-        self.female[1] + self.male[1]
-    }
-    pub fn remove(&mut self, count: u32, rng: &mut Rng) -> u32 {
-        let count = count.min(self.total());
-        // Six cohort operations, independent of population size.
-        let mut remaining = count;
-        let mut total = self.total();
-        for cohort in self.female.iter_mut().chain(&mut self.male) {
-            let n = if total == *cohort {
-                remaining
-            } else {
-                rng.expected(remaining as f32 * *cohort as f32 / total.max(1) as f32)
-                    .min(*cohort)
-                    .min(remaining)
-            };
-            total -= *cohort;
-            *cohort -= n;
-            remaining -= n;
-        }
-        count - remaining
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Specialists {
-    pub hunters: u32,
-    pub gatherers: u32,
-    pub healers: u32,
-    pub guides: u32,
-}
-impl Specialists {
-    pub fn from_adults(n: u32) -> Self {
-        let hunters = n * 4 / 10;
-        let healers = n / 20;
-        let guides = n / 10;
-        Self {
-            hunters,
-            healers,
-            guides,
-            gatherers: n - hunters - healers - guides,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Tribe {
-    pub id: u32,
-    pub cell: CellId,
-    pub people: Demography,
-    pub specialists: Specialists,
-    pub languages: Vec<Language>,
-    pub food: f32,
-    pub health: f32,
-    pub travel: f32,
-    pub hunting_skill: f32,
-    pub knowledge: Knowledge,
-    pub equipment: Equipment,
-    /// Today's fraction of food-working time assigned to aquatic foraging.
-    pub fishing_effort: f32,
-    pub camp_tradition: CampTradition,
-    pub camp_pressure_days: u32,
-    pub parent_band: Option<u32>,
-    pub culture: u32,
-    pub isolation_days: u32,
-    pub last_cultural_contact: u64,
-    pub contact_culture: Option<u32>,
-    pub contact_days: u32,
-    pub last_foreign_contact: u64,
-    pub residence_days: u32,
-}
-impl Tribe {
-    pub fn headcount(&self) -> u32 {
-        self.people.total()
-    }
-}
-
-pub fn understanding(a: &[Language], b: &[Language]) -> f32 {
-    a.iter()
-        .map(|x| {
-            b.iter()
-                .filter(|y| x.family == y.family)
-                .map(|y| x.share.min(y.share))
-                .sum::<f32>()
-        })
-        .sum::<f32>()
-        .clamp(0., 1.)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,6 +232,8 @@ pub struct World {
     pub tribes: Vec<Tribe>,
     /// Monotonic IDs are never reused, even after a band dies out.
     pub next_band_id: u64,
+    /// Next globally unique individual identity; never reused after death.
+    pub next_human_id: u64,
     pub cultures: Vec<Culture>,
     pub sites: Vec<CulturalSite>,
     pub next_site_id: u64,
@@ -410,6 +281,9 @@ impl World {
         self.herds.iter().map(|h| u64::from(h.animals)).sum()
     }
     pub fn event(&mut self, event: Event) {
+        if self.insights.policy == AnalyticsPolicy::Off {
+            return;
+        }
         if self.events.len() == 512 {
             self.events.pop_front();
         }
@@ -427,10 +301,7 @@ mod tests {
     #[test]
     fn cohort_removal_conserves_population() {
         for count in 0..120 {
-            let mut d = Demography {
-                female: [10, 24, 5],
-                male: [13, 32, 8],
-            };
+            let mut d = Demography::from_counts([10, 24, 5], [13, 32, 8], 360, &mut 0);
             let before = d.total();
             let n = d.remove(count, &mut Rng::new(count as u64));
             assert_eq!(n, count.min(before));

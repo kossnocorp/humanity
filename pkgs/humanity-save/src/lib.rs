@@ -100,7 +100,9 @@ pub fn validate(w: &World) -> Result<()> {
             "invalid resources at cell {i}"
         );
         ensure!(
-            finite_range(c.resources.toolstone, 0., 1.),
+            finite_range(c.resources.toolstone, 0., 1.)
+                && c.resources.foraging_pressure.is_finite()
+                && c.resources.foraging_pressure >= 0.,
             "invalid toolstone at cell {i}"
         );
         if let Some(downstream) = c.drainage {
@@ -169,7 +171,90 @@ pub fn validate(w: &World) -> Result<()> {
         );
     }
     let mut living_cultures = HashSet::new();
+    let mut human_ids = HashSet::new();
     for t in &w.tribes {
+        ensure!(
+            t.people.year_days == w.config.year_days() && t.people.day == w.day,
+            "invalid human calendar"
+        );
+        let mut female = [0_u32; 3];
+        let mut male = [0_u32; 3];
+        let mut roles = [0_u32; 5];
+        for h in &t.people.members {
+            ensure!(
+                human_ids.insert(h.id)
+                    && h.id < w.next_human_id
+                    && h.birth_day <= w.day as i64
+                    && h.birth_day >= -i64::from(w.config.year_days()) * 200
+                    && finite_range(h.health, 0., 1.)
+                    && finite_range(h.work_fraction, 0., 1.)
+                    && h.skills.levels.iter().all(|&v| finite_range(v, 0., 1.))
+                    && h.skills
+                        .experience
+                        .iter()
+                        .chain(&h.skills.taught)
+                        .chain(&h.skills.stories)
+                        .all(|&v| stock(v)),
+                "invalid individual {}",
+                h.id
+            );
+            let counts = if h.sex == Sex::Female {
+                &mut female
+            } else {
+                &mut male
+            };
+            counts[h.stage(w.day, w.config.year_days())] += 1;
+            match h.role {
+                Role::Hunter => roles[0] += 1,
+                Role::Gatherer => roles[1] += 1,
+                Role::Fisher => roles[2] += 1,
+                Role::Healer => roles[3] += 1,
+                Role::Guide => roles[4] += 1,
+                Role::Dependent => (),
+            }
+            let mut previous = 0;
+            for event in &h.history {
+                ensure!(
+                    event.day >= previous && event.day <= w.day,
+                    "invalid biography chronology"
+                );
+                previous = event.day;
+                match event.kind {
+                    LifeEventKind::TaughtBy { teacher, .. } => ensure!(
+                        teacher < w.next_human_id && teacher != h.id,
+                        "invalid teacher identity"
+                    ),
+                    LifeEventKind::ChildBorn(id) => {
+                        ensure!(id < w.next_human_id && id != h.id, "invalid child identity")
+                    }
+                    LifeEventKind::JoinedBand(id) => ensure!(
+                        u64::from(id) < w.next_band_id,
+                        "invalid personal band history"
+                    ),
+                    LifeEventKind::SkillMilestone { level, .. } => {
+                        ensure!(level <= 100, "invalid skill milestone")
+                    }
+                    _ => (),
+                }
+            }
+        }
+        ensure!(
+            female == t.people.female && male == t.people.male,
+            "individual/cohort count mismatch"
+        );
+        let summary = t.people.knowledge(t.knowledge.prey);
+        ensure!(
+            summary
+                .practitioners
+                .iter()
+                .flatten()
+                .zip(t.knowledge.practitioners.iter().flatten())
+                .all(|(a, b)| (a - b).abs() < 0.0001),
+            "stale skill summary"
+        );
+        let health =
+            t.people.members.iter().map(|h| h.health).sum::<f32>() / t.headcount().max(1) as f32;
+        ensure!((health - t.health).abs() < 0.0001, "stale health summary");
         ensure!(
             (t.culture as usize) < w.cultures.len()
                 && t.contact_culture
@@ -237,11 +322,7 @@ pub fn validate(w: &World) -> Result<()> {
             t.id
         );
         ensure!(
-            u64::from(s.hunters)
-                + u64::from(s.gatherers)
-                + u64::from(s.healers)
-                + u64::from(s.guides)
-                == u64::from(t.people.adults()),
+            [s.hunters, s.gatherers, s.fishers, s.healers, s.guides] == roles,
             "specialist count mismatch"
         );
         ensure!(
@@ -385,9 +466,22 @@ fn validate_insights(w: &World) -> Result<()> {
         since <= w.day && d.deaths.checked_total() == Some(w.totals.deaths),
         "death cause accounting mismatch"
     );
+    if d.policy == AnalyticsPolicy::Off {
+        ensure!(
+            d.history.is_empty() && d.recent_deaths.is_empty() && w.events.is_empty(),
+            "disabled analytics retains optional history"
+        );
+        return Ok(());
+    }
+    ensure!(
+        !matches!(d.policy, AnalyticsPolicy::Years(0)),
+        "analytics year limit must be positive"
+    );
     ensure!(
         !d.history.is_empty()
-            && d.history.len() <= history_capacity(w.config.year_days())
+            && d.policy
+                .capacity(w.config.year_days())
+                .is_none_or(|cap| d.history.len() <= cap)
             && d.recent_deaths.len() <= DEATH_RECORDS,
         "invalid diagnostic history size"
     );
@@ -538,6 +632,7 @@ pub fn summary(w: &World) -> serde_json::Value {
         "mean_health": w.tribes.iter().map(|t| f64::from(t.health)).sum::<f64>() / w.tribes.len().max(1) as f64,
         "totals": w.totals, "recent_events": w.events.len(), "rng_state": w.rng.state,
         "death_causes": w.insights.deaths, "population_insights": w.insights.history.back(),
+        "analytics_policy": w.insights.policy, "next_human_id": w.next_human_id,
     })
 }
 
@@ -564,8 +659,14 @@ mod tests {
         let path = dir.path().join("world.json");
         let mut w = world();
         humanity_sim::Simulation::default().advance(&mut w, 70);
+        // A real long-run aggregate that loses one ULP without float_roundtrip.
+        w.totals.gathered = 28_652_685.687_526_926;
         save(&w, &path).unwrap();
         let mut restored = load(&path).unwrap();
+        assert_eq!(
+            w.totals.gathered.to_bits(),
+            restored.totals.gathered.to_bits()
+        );
         humanity_sim::Simulation::default().advance(&mut restored, 50);
         humanity_sim::Simulation::default().advance(&mut w, 50);
         assert_eq!(
@@ -608,5 +709,55 @@ mod tests {
                     .contains("generate a new planet")
             );
         }
+    }
+
+    #[test]
+    fn analytics_modes_preserve_individual_state_and_resume_with_recording_off() {
+        let mut full = world();
+        let mut off = full.clone();
+        off.set_analytics(AnalyticsPolicy::Off);
+        humanity_sim::Simulation::default().advance(&mut full, 180);
+        humanity_sim::Simulation::default().advance(&mut off, 180);
+        assert_eq!(
+            serde_json::to_value(&full.tribes).unwrap(),
+            serde_json::to_value(&off.tribes).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&full.cells).unwrap(),
+            serde_json::to_value(&off.cells).unwrap()
+        );
+        assert_eq!(full.rng.state, off.rng.state);
+        assert_eq!(full.insights.deaths, off.insights.deaths);
+        assert!(off.insights.history.is_empty() && off.events.is_empty());
+        assert!(
+            off.tribes
+                .iter()
+                .all(|t| t.people.members.iter().all(|h| !h.history.is_empty()))
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("individuals.json");
+        save(&off, &path).unwrap();
+        let mut resumed = load(&path).unwrap();
+        humanity_sim::Simulation::default().advance(&mut off, 20);
+        humanity_sim::Simulation::default().advance(&mut resumed, 20);
+        assert_eq!(
+            serde_json::to_value(&off).unwrap(),
+            serde_json::to_value(&resumed).unwrap()
+        );
+        resumed.set_analytics(AnalyticsPolicy::Years(1));
+        assert_eq!(resumed.insights.history.len(), 1);
+        assert_eq!(resumed.insights.history[0].day, resumed.day);
+        full.set_analytics(AnalyticsPolicy::Years(1));
+        assert_eq!(
+            full.insights.history.len(),
+            full.config.year_days() as usize + 1
+        );
+        assert_eq!(
+            full.insights.history.front().unwrap().day,
+            full.day - u64::from(full.config.year_days())
+        );
+        let human = &mut resumed.tribes[0].people.members[0];
+        human.skills.levels[0] = 1.5;
+        assert!(validate(&resumed).is_err());
     }
 }
