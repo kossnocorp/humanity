@@ -77,7 +77,7 @@ pub fn setup(mut commands: Commands) {
             p.spawn((Hud::Notes, Text::default(), TextFont { font_size: 14., ..default() }, TextColor(INK)));
             p.spawn((Text::new("RECENT ENCOUNTERS"), TextFont { font_size: 12., ..default() }, TextColor(GOLD)));
             p.spawn((Hud::Chronicle, Text::default(), TextFont { font_size: 12., ..default() }, TextColor(MUTED)));
-            p.spawn((Text::new("Cream camps: human bands\nCyan houses: fishing locations\nViolet tents: remembered camps\nOchre animals: migrating herds\nBlue threads: rivers  /  Pale ground: snow"),
+            p.spawn((Text::new("Cream camps: human bands\nCyan houses: fishing locations\nViolet tents: remembered camps\nOchre herds: large game\nRabbits: small fauna (close zoom / Food)\nBlue threads: rivers  /  Pale ground: snow"),
                 TextFont { font_size: 11., ..default() }, TextColor(MUTED)));
         });
     commands.spawn((
@@ -119,7 +119,7 @@ pub fn update(
     for (mut text, kind) in &mut texts {
         if matches!(kind, Hud::Header) {
             **text = format!(
-                "Year {}  /  Day {}  /  {} in the north     {}  {:.2} days/s\n{} people in {} bands     {} animals in {} herds     {}",
+                "Year {}  /  Day {}  /  {} in the north     {}  {:.2} days/s\n{} people in {} bands     {} animals in {} groups     {}",
                 w.day / u64::from(w.config.year_days()) + 1,
                 w.day,
                 w.season(),
@@ -167,6 +167,25 @@ pub fn update(
                     animals
                 );
                 let r = &c.resources;
+                let v = &r.vegetation;
+                let demand = w.herds.iter().filter(|h| h.cell == id).fold(
+                    humanity_core::Forage::default(),
+                    |d, h| {
+                        let traits = h.species.traits();
+                        let need = h.animals as f32
+                            * traits.food_need
+                            * (1.
+                                + (traits.temperature - c.weather.temperature - traits.tolerance)
+                                    .max(0.)
+                                    * 0.01);
+                        d + traits.diet.weights().scaled(need)
+                    },
+                );
+                body.push_str(&format!("\nFLORA / shared forage budget\nGrass cover {:.0}% / woody cover {:.0}%\nVigor: grass {:.0}% / browse {:.0}%\nSeasonal food supply/day\nGrass {:.2} / browse {:.2} / fruit {:.2}\nWildlife demand/day\nGrass {:.2} / browse {:.2} / fruit {:.2}\n",
+                    v.grass_cover*100., v.woody_cover*100., v.vigor[0]*100., v.vigor[1]*100.,
+                    v.wildlife_supply.grazing, v.wildlife_supply.browse, v.wildlife_supply.fruit,
+                    demand.grazing, demand.browse, demand.fruit));
+                body.push_str(&format!("Woody browse {:.0} animal-food units\nSmall-game biomass comes from living fauna.\n", r.browse));
                 if let Some(human_id) = view.selected_human
                     && let Some((t, h)) = w.tribes.iter().find_map(|t| {
                         t.people
@@ -213,10 +232,11 @@ pub fn update(
                     r.aquatic.freshwater_fish, r.aquatic.coastal_fish, r.aquatic.shellfish, r.wood, r.fiber, r.toolstone*100.));
                 for h in w.herds.iter().filter(|h| h.cell == id) {
                     body.push_str(&format!(
-                        "{:?}: {} / condition {:.0}%\n",
+                        "{:?}: {} / condition {:.0}% / wariness {:.0}%\n",
                         h.species,
                         h.animals,
-                        h.condition * 100.
+                        h.condition * 100.,
+                        h.wariness * 100.
                     ));
                 }
                 for s in w.sites.iter().filter(|s| s.cell == id) {

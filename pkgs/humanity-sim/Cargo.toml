@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+humanity-fauna.workspace = true
 humanity-core.workspace = true
 humanity-world.workspace = true
 

@@ -2443,6 +2443,8 @@ version = "0.1.0"
 dependencies = [
  "humanity-bands",
  "humanity-cultures",
+ "humanity-fauna",
+ "humanity-flora",
  "humanity-grid",
  "humanity-humans",
  "humanity-nutrition",
@@ -2452,6 +2454,22 @@ dependencies = [
 
 [[package]]
 name = "humanity-cultures"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "humanity-fauna"
+version = "0.1.0"
+dependencies = [
+ "humanity-flora",
+ "humanity-grid",
+ "serde",
+]
+
+[[package]]
+name = "humanity-flora"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -2478,6 +2496,7 @@ dependencies = [
 name = "humanity-nutrition"
 version = "0.1.0"
 dependencies = [
+ "humanity-flora",
  "serde",
 ]
 
@@ -2499,6 +2518,7 @@ name = "humanity-sim"
 version = "0.1.0"
 dependencies = [
  "humanity-core",
+ "humanity-fauna",
  "humanity-world",
  "serde_json",
 ]
@@ -2528,6 +2548,8 @@ name = "humanity-world"
 version = "0.1.0"
 dependencies = [
  "humanity-core",
+ "humanity-fauna",
+ "humanity-flora",
  "humanity-grid",
  "noise",
 ]

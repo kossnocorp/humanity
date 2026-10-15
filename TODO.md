@@ -12,7 +12,8 @@
 | Specialists | Derived daily hunter/gatherer/fisher/healer/guide assignments responding to skills and opportunities |
 | Culture | Named shared identity with variant, founding date and up to two parent identities |
 | Cultural site | One remembered place per culture/cell: fishing or residential function, multiple seasons of use, occupation history, condition and upkeep |
-| Herd / species | Moving aggregate animal population, condition and travel; six land species |
+| Wildlife population / species | Aggregate herd, flock or colony with condition, travel and wariness; 14 species with distinct diets and life histories |
+| Vegetation / forage | Plant-community stocks, cover/vigor, seasonal production and a shared food budget for all wildlife consumers |
 | Language mixture | Family shares within a band; overlap affects mutual understanding |
 | Skills / Knowledge | Personal proficiency/experience in 13 skills; derived band means and shared prey familiarity |
 | Equipment | Portable wood, fiber, stone, hides and boat passenger capacity |
@@ -54,7 +55,11 @@ retains 512 events; lifetime totals and population diagnostics are separate.
 - `pkgs/humanity-humans/src/{lib,demography}.rs`: individuals, biographies and chronological lifecycle.
 - `pkgs/humanity-bands/src/{lib,roles,learning,membership}.rs`: groups, work allocation, apprenticeship/stories and fission.
 - `pkgs/humanity-skills/src/{lib,learning}.rs`: skill definitions, personal experience and capped learning rules.
-- `pkgs/humanity-nutrition/src/{foraging,hunting,fishing,consumption,stocks,rules}.rs`: food mechanics/data; hunting/species.rs owns prey/herds.
+- `pkgs/humanity-nutrition/src/{foraging,hunting,fishing,consumption,stocks,rules}.rs`: food acquisition, stocks and consumption.
+- `pkgs/humanity-fauna/src/{lib,species,ecology,hunting}.rs`: animal data/traits, resource-limited ecology, avoidance, dispersal, encounter and harvest.
+- `pkgs/humanity-world/src/wildlife.rs`: world/fauna input/output adapter and derived small-game biomass.
+- `pkgs/humanity-flora/src/{stocks,rules,growth}.rs`: terrestrial plant data, community profiles, growth and productive forage limits.
+- `pkgs/humanity-world/src/flora.rs`: world biome/weather adapter for flora.
 - `pkgs/humanity-cultures/src/lib.rs`: shared cultural identities, customs and social tuning.
 - `pkgs/humanity-core/src/sites.rs`: places, occupation histories and condition.
 - `pkgs/humanity-core/src/insights.rs`: population/mortality records.
@@ -85,6 +90,8 @@ Analytics defaults to unlimited; configurable years/off leave living biographies
 | `humanity-bands` | Residential group state, membership, shared provisions/equipment, collective decisions and labor demand, language/culture affiliation, fission/fusion and member transfers |
 | `humanity-skills` | Skill definitions, proficiency/experience, practice progression, prerequisites, teaching/apprenticeship and transmission rules |
 | `humanity-nutrition` | Food acquisition and nutrition: foraging, hunting, fishing, accessible resource stocks/depletion, work/travel budgets, food requirements, consumption, preservation/spoilage and relevant tuning/data |
+| `humanity-fauna` | Animal populations, species traits/diets, reproduction, mortality, human avoidance, dispersal and physical animal harvest |
+| `humanity-flora` | Terrestrial plant stocks, community cover, growth, forage production and overuse/recovery state |
 | `humanity-cultures` | Cultural identities/customs/variants and social preferences; not generic ecology or human learning mechanics |
 | `humanity-world` | Planet generation, weather/climate, hydrology and habitat dynamics; invokes food-resource renewal where appropriate |
 | `humanity-core` | Shared world composition, identifiers and cross-domain records; reduce its existing ownership of unrelated domain types |
@@ -273,8 +280,21 @@ Research: [`docs/research/deaths.md`](docs/research/deaths.md) and
 - [ ] Investigate need-based inter-band sharing, recruitment and flexible camp
   membership to help recover from worker losses. Existing within-band food pooling
   and one-way fission do not provide all these mechanisms.
-- [ ] Investigate herd budding/recolonization from surviving populations and spatial
-  access to prey; do not create animals spontaneously after global extinction.
+- [x] Introduce resource-limited fauna budding/recolonization from surviving
+  populations, realistic search penalties and conservative animal accounting.
+  Fresh v9 worlds contain 14 species; no ongoing generation or extinction floor.
+  See `docs/research/fauna.md` for baseline diagnosis and multi-seed evaluations.
+- [x] Correct v9 overexpansion with `humanity-flora`: replace independent species
+  pasture allowances with shared production/reserve budgets, account for all
+  competing diets and incoming migrants, remove the empty-cell capacity floor,
+  differentiate forest understory from grassland, and model overgrazing/rest.
+  v10 also distinguishes large-game markers from small colonies. Validation and
+  remaining calibration limits are in `docs/research/flora.md`.
+- [ ] Extend guild-level flora with named plant species, soil/seed dynamics and
+  succession where useful; calibrate productive-flow and reserve assumptions across
+  climates without reinstating global herd quotas or unconditional food renewal.
+- [ ] Broaden fauna calibration across climates and densities; consider explicit
+  predators, detailed animal age/sex structure, mate-seeking and longer migrations.
 - [ ] Replace appropriate portions of residual background mortality with explicit,
   evidence-informed mechanisms eventually. Do not simply stack new disease deaths
   on top of the existing placeholder hazard.

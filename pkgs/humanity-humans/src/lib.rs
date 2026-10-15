@@ -234,9 +234,9 @@ impl Demography {
             h.record(self.day, LifeEventKind::JoinedBand(band));
         }
     }
-    pub fn knowledge(&self, prey: [f32; 6]) -> Knowledge {
+    pub fn knowledge(&self, prey: &[f32]) -> Knowledge {
         let mut k = Knowledge {
-            prey,
+            prey: prey.to_vec(),
             ..Knowledge::default()
         };
         let mut counts = [0_u32; 3];

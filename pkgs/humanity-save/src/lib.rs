@@ -88,6 +88,7 @@ pub fn validate(w: &World) -> Result<()> {
                 c.resources.plants,
                 c.resources.fruit,
                 c.resources.game,
+                c.resources.browse,
                 c.resources.grazing,
                 c.resources.aquatic.freshwater_fish,
                 c.resources.aquatic.coastal_fish,
@@ -104,6 +105,19 @@ pub fn validate(w: &World) -> Result<()> {
                 && c.resources.foraging_pressure.is_finite()
                 && c.resources.foraging_pressure >= 0.,
             "invalid toolstone at cell {i}"
+        );
+        let v = &c.resources.vegetation;
+        ensure!(
+            v.vigor.iter().all(|&x| finite_range(x, 0., 1.))
+                && finite_range(v.grass_cover, 0., 1.)
+                && finite_range(v.woody_cover, 0., 1.)
+                && v.grass_cover + v.woody_cover <= 1.00001
+                && v.capacity
+                    .values()
+                    .into_iter()
+                    .chain(v.wildlife_supply.values())
+                    .all(stock),
+            "invalid flora at cell {i}"
         );
         if let Some(downstream) = c.drainage {
             ensure!(
@@ -138,9 +152,19 @@ pub fn validate(w: &World) -> Result<()> {
     let valid_cell =
         |id: CellId| (id as usize) < w.cells.len() && !w.cells[id as usize].biome.water();
     let mut ids = HashSet::new();
+    let mut locations = HashSet::new();
+    let mut species_population = [0_u64; Species::ALL.len()];
+    let mut small_game = vec![0_f32; w.cells.len()];
+    ensure!(
+        w.next_herd_id <= u64::from(u32::MAX) + 1,
+        "invalid wildlife ID counter"
+    );
     for h in &w.herds {
         ensure!(
-            ids.insert(h.id) && valid_cell(h.cell),
+            ids.insert(h.id)
+                && valid_cell(h.cell)
+                && u64::from(h.id) < w.next_herd_id
+                && locations.insert((h.cell, h.species)),
             "invalid herd {}",
             h.id
         );
@@ -148,11 +172,43 @@ pub fn validate(w: &World) -> Result<()> {
             h.animals > 0
                 && h.animals <= 1_000_000_000
                 && finite_range(h.condition, 0., 1.)
-                && finite_range(h.travel, 0., w.config.cell_km * 2.),
+                && finite_range(h.travel, 0., w.config.cell_km * 2.5)
+                && finite_range(h.wariness, 0., 1.),
             "invalid herd state {}",
             h.id
         );
+        species_population[h.species.index()] += u64::from(h.animals);
+        if h.species.small() {
+            small_game[h.cell as usize] += h.animals as f32 * h.species.meat();
+        }
     }
+    for species in Species::ALL {
+        let i = species.index();
+        ensure!(
+            w.fauna_stats.initial[i]
+                .checked_add(w.fauna_stats.births[i])
+                .and_then(|n| n.checked_sub(w.fauna_stats.natural_deaths[i]))
+                .and_then(|n| n.checked_sub(w.fauna_stats.harvested[i]))
+                == Some(species_population[i]),
+            "wildlife accounting mismatch for {:?}",
+            species
+        );
+    }
+    ensure!(
+        w.fauna_stats
+            .harvested
+            .iter()
+            .try_fold(0_u64, |n, &v| n.checked_add(v))
+            == Some(w.totals.animals_hunted),
+        "harvest accounting mismatch"
+    );
+    ensure!(
+        w.cells
+            .iter()
+            .zip(small_game)
+            .all(|(c, expected)| (c.resources.game - expected).abs() < 0.01 + expected * 0.00001),
+        "small-game biomass must match living fauna"
+    );
     ids.clear();
     ensure!(
         w.next_band_id <= u64::from(u32::MAX) + 1,
@@ -242,7 +298,7 @@ pub fn validate(w: &World) -> Result<()> {
             female == t.people.female && male == t.people.male,
             "individual/cohort count mismatch"
         );
-        let summary = t.people.knowledge(t.knowledge.prey);
+        let summary = t.people.knowledge(&t.knowledge.prey);
         ensure!(
             summary
                 .practitioners
@@ -298,12 +354,13 @@ pub fn validate(w: &World) -> Result<()> {
         );
         let s = &t.specialists;
         ensure!(
-            t.knowledge
-                .practitioners
-                .iter()
-                .flatten()
-                .chain(&t.knowledge.prey)
-                .all(|&x| finite_range(x, 0., 1.)),
+            t.knowledge.prey.len() == Species::ALL.len()
+                && t.knowledge
+                    .practitioners
+                    .iter()
+                    .flatten()
+                    .chain(&t.knowledge.prey)
+                    .all(|&x| finite_range(x, 0., 1.)),
             "invalid knowledge in band {}",
             t.id
         );
@@ -610,7 +667,57 @@ pub fn summary(w: &World) -> serde_json::Value {
             )
         })
         .collect();
+    let wildlife_diagnostics: std::collections::BTreeMap<_, _> = Species::ALL
+        .into_iter()
+        .map(|s| {
+            let i = s.index();
+            let population = wildlife[&format!("{s:?}")];
+            let groups = w.herds.iter().filter(|h| h.species == s).count();
+            let wariness = w
+                .herds
+                .iter()
+                .filter(|h| h.species == s)
+                .map(|h| f64::from(h.wariness) * f64::from(h.animals))
+                .sum::<f64>()
+                / population.max(1) as f64;
+            (
+                format!("{s:?}"),
+                serde_json::json!({"animals": population, "groups": groups,
+            "initial": w.fauna_stats.initial[i], "births": w.fauna_stats.births[i],
+            "natural_deaths": w.fauna_stats.natural_deaths[i], "hunted": w.fauna_stats.harvested[i],
+            "mean_wariness": wariness, "extinct": population == 0 && w.fauna_stats.initial[i] > 0}),
+            )
+        })
+        .collect();
+    let mut vegetation_cells = 0_u64;
+    let mut vigor = [0_f64; 3];
+    let mut supply = [0_f64; 3];
+    for cell in &w.cells {
+        let v = &cell.resources.vegetation;
+        if v.grass_cover + v.woody_cover > 0. {
+            vegetation_cells += 1;
+            for (sum, value) in vigor.iter_mut().zip(v.vigor) {
+                *sum += f64::from(value);
+            }
+        }
+        for (sum, value) in supply.iter_mut().zip(v.wildlife_supply.values()) {
+            *sum += f64::from(value);
+        }
+    }
+    for value in &mut vigor {
+        *value /= vegetation_cells.max(1) as f64;
+    }
+    let occupied: HashSet<_> = w.herds.iter().map(|h| h.cell).collect();
+    let large_game: HashSet<_> = w
+        .herds
+        .iter()
+        .filter(|h| !h.species.small())
+        .map(|h| h.cell)
+        .collect();
     serde_json::json!({
+        "flora": { "vegetated_cells": vegetation_cells, "mean_vigor_grass_browse_fruit": vigor,
+            "shared_daily_supply_grass_browse_fruit": supply,
+            "wildlife_occupied_cells": occupied.len(), "large_game_cells": large_game.len() },
         "living_cultures": cultures,
         "cultural_sites": w.sites,
         "band_sizes": {
@@ -621,7 +728,9 @@ pub fn summary(w: &World) -> serde_json::Value {
         "camp_traditions": CampTradition::ALL.into_iter().map(|tradition| {
             (tradition.label(), w.tribes.iter().filter(|t| t.camp_tradition == tradition).count())
         }).collect::<std::collections::BTreeMap<_, _>>(),
-        "wildlife":wildlife, "adult_knowledge":knowledge,
+        "wildlife":wildlife, "wildlife_diagnostics": wildlife_diagnostics,
+        "wildlife_dispersals": w.fauna_stats.dispersals, "wildlife_mergers": w.fauna_stats.mergers,
+        "adult_knowledge":knowledge,
         "aquatic_food":w.cells.iter().map(|c|f64::from(c.resources.aquatic.total())).sum::<f64>(),
         "boat_places":w.tribes.iter().map(|t|f64::from(t.equipment.boat_places)).sum::<f64>(),
         "day": w.day, "year": w.day / u64::from(w.config.year_days()) + 1,
@@ -709,6 +818,22 @@ mod tests {
                     .contains("generate a new planet")
             );
         }
+    }
+
+    #[test]
+    fn extinct_fauna_cannot_return_as_regenerated_meat_and_budgets_are_validated() {
+        let mut w = world();
+        for h in &mut w.herds {
+            w.totals.animals_hunted += u64::from(h.harvest(u32::MAX, &mut w.fauna_stats));
+        }
+        w.herds.clear();
+        humanity_world::wildlife::refresh_small_game(&mut w);
+        humanity_sim::Simulation::default().advance(&mut w, 180);
+        assert_eq!(w.animals(), 0);
+        assert!(w.cells.iter().all(|c| c.resources.game == 0.));
+        validate(&w).unwrap();
+        w.fauna_stats.births[0] += 1;
+        assert!(validate(&w).is_err());
     }
 
     #[test]

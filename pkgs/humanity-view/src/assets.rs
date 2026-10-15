@@ -8,6 +8,7 @@ use bevy::{
 pub struct Icons {
     pub tribe: Handle<Image>,
     pub herd: Handle<Image>,
+    pub small_fauna: Handle<Image>,
     pub forest: Handle<Image>,
     pub mountain: Handle<Image>,
     pub fish: Handle<Image>,
@@ -51,6 +52,7 @@ pub fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(Icons {
         tribe: svg(include_str!("../assets/tribe.svg")),
         herd: svg(include_str!("../assets/herd.svg")),
+        small_fauna: svg(include_str!("../assets/small-fauna.svg")),
         forest: svg(include_str!("../assets/forest.svg")),
         mountain: svg(include_str!("../assets/mountain.svg")),
         fish: svg(include_str!("../assets/fish.svg")),

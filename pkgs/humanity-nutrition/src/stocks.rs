@@ -1,3 +1,4 @@
+use humanity_flora::Vegetation;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -18,22 +19,27 @@ impl AquaticLife {
 pub struct Resources {
     /// Depletion of easily reached patches; remote standing biomass remains.
     pub foraging_pressure: f32,
-    /// Edible plant stock in person-days.
-    pub plants: f32,
-    /// Edible fruit stock in person-days.
-    pub fruit: f32,
-    /// Edible small-game stock in person-days.
+    /// Plant stocks, condition and production owned by humanity-flora.
+    pub vegetation: Vegetation,
+    /// Derived small-wildlife biomass in person-days; harvesting must remove actual fauna.
     pub game: f32,
-    /// Grazing stock in animal-days.
-    pub grazing: f32,
     /// Renewable aquatic food stocks.
     pub aquatic: AquaticLife,
-    /// Available craft wood units.
-    pub wood: f32,
-    /// Available plant-fiber units.
-    pub fiber: f32,
     /// Accessible toolstone availability, 0..1.
     pub toolstone: f32,
+}
+// Preserve convenient stock access for consumers; serialization keeps vegetation
+// explicitly nested so ownership and production state remain inspectable.
+impl std::ops::Deref for Resources {
+    type Target = Vegetation;
+    fn deref(&self) -> &Vegetation {
+        &self.vegetation
+    }
+}
+impl std::ops::DerefMut for Resources {
+    fn deref_mut(&mut self) -> &mut Vegetation {
+        &mut self.vegetation
+    }
 }
 impl Resources {
     pub fn edible(&self) -> f32 {

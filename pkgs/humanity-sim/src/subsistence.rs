@@ -48,12 +48,12 @@ pub fn exchange(a: &mut Tribe, b: &mut Tribe, language: f32, rng: &mut Rng) -> O
     if !learned {
         return None;
     }
-    learner.knowledge = learner.people.knowledge(learner.knowledge.prey);
+    learner.knowledge = learner.people.knowledge(&learner.knowledge.prey);
     for (a, b) in learner
         .knowledge
         .prey
         .iter_mut()
-        .zip(teacher.knowledge.prey)
+        .zip(teacher.knowledge.prey.iter().copied())
     {
         *a += (b - *a).max(0.) * 0.08;
     }
@@ -72,6 +72,12 @@ fn opportunity(skill: Skill, c: &Cell, water: bool) -> bool {
 
 pub fn daily(world: &mut World) {
     let mut events = Vec::new();
+    let mut wildlife = vec![Vec::new(); world.cells.len()];
+    for group in &world.herds {
+        if group.animals > 0 {
+            wildlife[group.cell as usize].push(group);
+        }
+    }
     for t in &mut world.tribes {
         let n = t.headcount() as f32;
         if n == 0. {
@@ -105,14 +111,32 @@ pub fn daily(world: &mut World) {
                 ) * 4.
             })
             .fold(0_f32, f32::max);
-        let herd_opportunity = if world.herds.iter().any(|h| {
-            h.animals > 0
-                && (h.cell == t.cell || world.grid.neighbors(t.cell).any(|id| id == h.cell))
-        }) {
-            1.5
-        } else {
-            0.
-        };
+        let mut large_returns = 0_f32;
+        let mut small_returns = 0_f32;
+        for &id in &sites {
+            if id != t.cell && world.config.cell_km > 30. {
+                continue;
+            }
+            let c = &world.cells[id as usize];
+            let cover = ((if matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
+                0.75
+            } else {
+                0.15
+            }) + (c.elevation.max(0) as f32 / 5000.).min(0.2))
+            .min(0.95);
+            let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(id);
+            let distance = world.grid.angular_distance(t.cell, id) * world.config.radius_km();
+            for h in &wildlife[id as usize] {
+                let encounter = humanity_fauna::hunting::encounter(h, area, cover, distance);
+                let returns = encounter * h.species.meat() / h.species.traits().handling
+                    * (1. - c.weather.snow * 0.5);
+                if h.species.small() && id == t.cell {
+                    small_returns = small_returns.max(returns * 0.5);
+                } else if !h.species.small() {
+                    large_returns = large_returns.max(returns * 0.4);
+                }
+            }
+        }
         t.assign_roles(
             world.day,
             Opportunities {
@@ -123,8 +147,11 @@ pub fn daily(world: &mut World) {
                         area,
                         FORAGING.plant_half_density,
                     ),
-                hunting: access * encounter(home.resources.game, area, FORAGING.game_half_density)
-                    + herd_opportunity,
+                hunting: if large_returns > 0. {
+                    large_returns * 0.6 + small_returns * 0.3
+                } else {
+                    small_returns * 0.9
+                },
                 fishing: aquatic_opportunity,
             },
         );
@@ -144,7 +171,7 @@ pub fn daily(world: &mut World) {
                 }) {
                     h.skills.levels[skill as usize] = (h.skills.level(skill) + 0.03).min(1.);
                 }
-                t.knowledge = t.people.knowledge(t.knowledge.prey);
+                t.knowledge = t.people.knowledge(&t.knowledge.prey);
                 world.totals.innovations += 1;
                 events.push(Event {
                     day: world.day,

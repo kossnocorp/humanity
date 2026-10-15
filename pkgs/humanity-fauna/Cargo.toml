@@ -1,0 +1,10 @@
+[package]
+name = "humanity-fauna"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+humanity-flora.workspace = true
+humanity-grid.workspace = true
+serde.workspace = true

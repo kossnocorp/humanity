@@ -152,7 +152,7 @@ fn main() -> Result<()> {
         world.set_analytics(humanity_core::AnalyticsPolicy::Unlimited);
     }
     eprintln!(
-        "Planet ready: {} cells, {} tribes, {} herds ({:.2}s)",
+        "Planet ready: {} cells, {} tribes, {} wildlife groups ({:.2}s)",
         world.cells.len(),
         world.tribes.len(),
         world.herds.len(),

@@ -6,6 +6,7 @@
 - Start with individual human records and independent ages/skills for detailed stories, without requiring individual render entities. Support later aggregation as population and social complexity grow; keep human state separate from band/group state.
 - Experimentation takes priority over premature efficiency. Analytics must default to unlimited retention, support a year cap or off mode, and preserve current inspection/living-human histories. Defer binary saves until measured costs warrant them.
 - Geography, climate, seasons, ecology, migration, tribal demographics/languages, and probabilistic events must interact. Seeded headless runs and inspectable saves are first-class.
+- Wildlife growth and spread must be limited by available vegetation/grazing. Keep plant ecology inspectable in `humanity-flora`.
 - Bands share evolving cultures; isolation and mixing can form new identities. Remembered camps support multi-season use and decay without visits/upkeep. Keep cultural variants and tuning parameters inspectable in a dedicated crate. Existing-save compatibility is not required.
 - Until the user explicitly says otherwise, discard old save formats: no backward compatibility, migrations, or fallback initialization for missing save data. Require fresh saves when the format changes.
 - Controls: Space pause; -/+ time speed; arrows/drag rotate the globe; wheel zoom; S save; L load.

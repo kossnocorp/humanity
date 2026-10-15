@@ -95,7 +95,7 @@ the Close button returns to the globe without clearing focus. Launch directly wi
 
 The `+` speed ceiling is **16,384 days/second** (64x the previous limit). Actual throughput depends on planet size and hardware; simulation work retains an 8ms frame budget to keep controls responsive.
 
-Cream camp icons are mobile human bands, not settlements. Ochre animal icons are herds. Rivers follow the curved surface; snow lightens the ground. The header names the **northern** season; the southern hemisphere has the opposite season. Temperature overlay runs blue → red; resource overlay brown → green. Large planets use a coarse globe at orbital distance; zoom in for exact cells and rivers. `F` moves close to the next band and follows it; `--follow-band 0` starts following band 0.
+Cream camp icons are mobile human bands, not settlements. Ochre animal icons mark occupied wildlife cells, including herds, flocks and small-animal colonies. Rivers follow the curved surface; snow lightens the ground. The header names the **northern** season; the southern hemisphere has the opposite season. Temperature overlay runs blue → red; resource overlay brown → green. Large planets use a coarse globe at orbital distance; zoom in for exact cells and rivers. `F` moves close to the next band and follows it; `--follow-band 0` starts following band 0.
 
 ### Planet arguments
 
@@ -121,7 +121,9 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v8:** stores individual humans, chronological birth dates, personal
+**Save format v10:** adds persistent flora stocks, vigor, cover and shared forage
+production budgets. It includes expanded fauna, wariness, per-species population budgets,
+monotonic wildlife IDs and woody browse. It also stores individual humans, chronological birth dates, personal
 skills/biographies, analytics policy, local depletion, multi-season camp use,
 bounded occupation histories,
 condition and maintenance along with cultures, ecology and demographics. **Start a
@@ -154,7 +156,41 @@ later be re-established with new IDs. Rates are tunable in `humanity-cultures`.
 
 ### Wildlife, fishing and cultures
 
-Six migrating land-animal types have distinct habitat preferences, reproductive rates, hunting difficulty and meat yields. Rivers, lakes and seas carry renewable fish and shellfish biomass. Fishing competes with hunting/gathering for labor. Bands collect wood, fiber, toolstone and hides, craft watercraft, preserve food, and develop species-specific hunting familiarity.
+`humanity-flora` now owns terrestrial vegetation. Grassland and woodland have
+different grass/browse cover; overgrazing reduces vigor and future production,
+while resting patches recover gradually. All local species **share one forage
+production budget**, including existing residents when checking incoming groups.
+Standing biomass alone no longer grants every species a separate carrying capacity.
+Field notes show plant cover/vigor, seasonal supply and wildlife demand; `--inspect`
+includes flora summaries and occupied-cell counts. See
+[`pkgs/humanity-flora/README.md`](pkgs/humanity-flora/README.md) for ownership/rules and
+[`docs/research/flora.md`](docs/research/flora.md) for the 14-year before/after audit.
+
+Herd markers now indicate **large game**. Small animal/bird colonies have a
+rabbit-shaped marker visible at close zoom or in the **Food** layer, and remain
+inspectable in field notes at any zoom. Both marker types stay half the band-icon size.
+
+**Fourteen terrestrial species** now have distinct diets, habitats, recruitment,
+movement, concealment and tolerance of humans: reindeer, bison, antelope, deer,
+boar, ibex, hare, rabbit, grouse, wild goose, beaver, wild horse, elk and mammoth.
+`humanity-fauna` owns their data and ecology. Browsers use woody vegetation;
+omnivores share fruit/seeds with human foragers. Recruitment depends on food,
+density, condition and local seasons. Living populations can disperse into depleted
+areas; transfers and mergers conserve animals. **Extinct species do not respawn.**
+
+Hunting now pays for finding rare/wary animals and favors expected obtainable
+returns rather than the first herd encountered. Human presence/hunting can cause
+avoidance; cover and quiet refuges help survivors. Small-game biomass is derived
+from actual animals, and trapping removes them instead of regenerating meat from
+nothing. Wildlife markers are deduplicated per cell; field notes list all
+local species, condition, wariness and available browse. `--inspect` adds
+`wildlife_diagnostics` with recruitment, natural deaths, harvest and extinction status.
+See [`pkgs/humanity-fauna/README.md`](pkgs/humanity-fauna/README.md) for trait data and
+[`docs/research/fauna.md`](docs/research/fauna.md) for research and evaluations.
+
+Rivers, lakes and seas retain renewable fish/shellfish biomass. Fishing competes
+with hunting/gathering for labor. Bands collect craft materials, build watercraft,
+preserve food and develop species-specific hunting familiarity.
 
 Thirteen practical skills belong to individuals. **Actual work earns experience**:
 hunters learn from attempts (less on failure); gathering, fishing, crafting and care
@@ -243,7 +279,9 @@ cargo run -p humanity-cli -- \
 | `humanity-humans` | Individual identities, chronological age, health, biographies and demographic lifecycle |
 | `humanity-bands` | Residential groups, shared equipment, role allocation, apprenticeship and membership transfer |
 | `humanity-skills` | Skill definitions, proficiency/experience, prerequisites and capped learning rules |
-| `humanity-nutrition` | Foraging/hunting/fishing, prey data, food stocks, rations and consumption |
+| `humanity-nutrition` | Foraging/hunting/fishing food calculations, resource composition, rations and consumption |
+| `humanity-fauna` | Species/herd data, diets, recruitment, mortality, avoidance, dispersal and harvest accounting |
+| `humanity-flora` | Plant communities/stocks, growth, seasonal forage production, degradation and recovery |
 | `humanity-cultures` | Tunable cultural variant registry, camp customs, social and site parameters |
 | `humanity-world` | Periodic terrain, acyclic drainage/lakes, biomes, daily weather, renewable ecology, initial seeding |
 | `humanity-sim` | Daily orchestration, spatial indexes, movement, contacts and domain integration |

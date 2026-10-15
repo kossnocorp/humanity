@@ -40,7 +40,7 @@ impl Simulation {
             t.refresh(world.day);
         }
         humanity_world::update_environment(world, false);
-        migrate_herds(world);
+        humanity_world::wildlife::advance(world);
         self.herds.rebuild(world.herds.iter().map(|h| h.cell));
         self.tribes.rebuild(world.tribes.iter().map(|t| t.cell));
         self.move_tribes(world);
@@ -52,6 +52,7 @@ impl Simulation {
         social::daily(world);
         social::fission(world);
         world.herds.retain(|h| h.animals > 0);
+        humanity_world::wildlife::refresh_small_game(world);
         world.tribes.retain(|t| t.headcount() > 0);
         world.record_population();
     }
@@ -95,11 +96,13 @@ impl Simulation {
                 if c.biome.water() {
                     return f32::NEG_INFINITY;
                 }
-                let herds: u32 = self
+                let herds: f32 = self
                     .herds
                     .at(id)
                     .iter()
-                    .map(|&(_, i)| world.herds[i].animals)
+                    .map(|&(_, i)| &world.herds[i])
+                    .filter(|h| !h.species.small())
+                    .map(|h| h.animals as f32 * h.species.meat() / 40.)
                     .sum();
                 let crowd = self
                     .tribes
@@ -144,7 +147,7 @@ impl Simulation {
                 };
                 attachment
                     + food.min(25.) / (1. + r.foraging_pressure)
-                    + (herds as f32 / n * 6.).min(18.)
+                    + (herds / n * 6.).min(18.)
                     + (r.grazing / 4000.).min(3.)
                     - c.weather.snow * 10.
                     - (c.weather.temperature - 18.).abs() * 0.18
@@ -239,6 +242,46 @@ impl Simulation {
             if n == 0. {
                 continue;
             }
+            // Choose obtainable returns, not the first herd in the spatial bucket.
+            let mut trap_target = None;
+            let mut hunt_target = None;
+            let mut trap_score = 0.;
+            let mut hunt_score = 0.;
+            for site in std::iter::once(t.cell).chain(
+                world
+                    .grid
+                    .neighbors(t.cell)
+                    .filter(|_| world.config.cell_km <= 30.),
+            ) {
+                let habitat = &world.cells[site as usize];
+                let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(site);
+                let cover = ((if matches!(
+                    habitat.biome,
+                    Biome::Forest | Biome::Taiga | Biome::Rainforest
+                ) {
+                    0.75
+                } else {
+                    0.15
+                }) + (habitat.elevation.max(0) as f32 / 5000.).min(0.2))
+                .min(0.95);
+                let distance = world.grid.angular_distance(t.cell, site) * world.config.radius_km();
+                for &(_, i) in self.herds.at(site) {
+                    let herd = &world.herds[i];
+                    if herd.animals == 0 {
+                        continue;
+                    }
+                    let encounter = humanity_fauna::hunting::encounter(herd, area, cover, distance);
+                    let score = encounter * herd.species.meat()
+                        / (herd.species.traits().handling + distance * 0.1);
+                    if herd.species.small() && site == t.cell && score > trap_score {
+                        trap_target = Some((i, encounter));
+                        trap_score = score;
+                    } else if !herd.species.small() && score > hunt_score {
+                        hunt_target = Some((i, encounter, habitat.weather.snow));
+                        hunt_score = score;
+                    }
+                }
+            }
             let cell = &mut world.cells[t.cell as usize];
             let access = (1. - cell.weather.snow * 0.8) / (1. + cell.resources.foraging_pressure)
                 * if t.residence_days == 0 {
@@ -257,14 +300,8 @@ impl Simulation {
             // Searching unsuccessfully still consumes labor. Regional biomass is
             // not a pile at camp, and depleted patches yield less before exhaustion.
             let gathered = foraging::gather(&mut cell.resources, work, area);
-            let game = hunting::trap(
-                &mut cell.resources,
-                t.labor(Role::Hunter) * 0.3 * access,
-                t.role_skill(Role::Hunter, Skill::Trapping),
-                area,
-            );
-            t.food += gathered + game;
-            world.totals.gathered += f64::from(gathered + game);
+            t.food += gathered;
+            world.totals.gathered += f64::from(gathered);
             let moving = if t.residence_days == 0 {
                 FORAGING.moving_work_fraction
             } else {
@@ -279,94 +316,117 @@ impl Simulation {
                     gathered > 0.,
                 );
             }
-            if hunters > 0. {
+            if hunters > 0.
+                && t.food < n * 12.
+                && let Some((i, encounter)) = trap_target
+            {
+                let herd = &mut world.herds[i];
+                let effort = if hunt_target.is_some() { 0.3 } else { 0.9 };
+                let (kills, probability) = herd.trap(
+                    t.labor(Role::Hunter) * effort * moving,
+                    t.role_skill(Role::Hunter, Skill::Trapping),
+                    encounter,
+                    &mut world.rng,
+                    &mut world.fauna_stats,
+                );
+                let food = kills as f32 * herd.species.meat();
+                t.food += food;
+                cell.resources.game = (cell.resources.game - food).max(0.);
+                world.totals.animals_hunted += u64::from(kills);
+                if kills > 0 {
+                    world.totals.hunts += 1;
+                } else {
+                    world.totals.failed_hunts += 1;
+                }
                 t.activity(
                     world.day,
                     Role::Hunter,
                     Skill::Trapping,
-                    moving * 0.3,
-                    game > 0.,
+                    moving * effort,
+                    kills > 0,
                 );
+                t.knowledge.prey[herd.species.index()] = (t.knowledge.prey[herd.species.index()]
+                    + if kills > 0 { 0.01 } else { 0.002 })
+                .min(1.);
+                events.push(Event {
+                    day: world.day,
+                    kind: if kills > 0 {
+                        EventKind::Hunt
+                    } else {
+                        EventKind::HuntFailed
+                    },
+                    cell: herd.cell,
+                    tribe: t.id,
+                    other: Some(herd.id),
+                    amount: kills,
+                    probability,
+                });
             }
-            if t.food < n * 12. && t.specialists.hunters > 0 {
-                let mut target = self
-                    .herds
-                    .at(t.cell)
-                    .iter()
-                    .map(|&(_, i)| i)
-                    .find(|&i| world.herds[i].animals > 0);
-                if target.is_none() && world.config.cell_km <= 30. {
-                    for neighbor in world.grid.neighbors(t.cell) {
-                        target = self
-                            .herds
-                            .at(neighbor)
-                            .iter()
-                            .map(|&(_, i)| i)
-                            .find(|&i| world.herds[i].animals > 0);
-                        if target.is_some() {
-                            break;
-                        }
-                    }
+            if t.food < n * 12.
+                && t.specialists.hunters > 0
+                && let Some((i, encounter, snow)) = hunt_target
+            {
+                let herd = &mut world.herds[i];
+                let p = hunting::success_probability(hunting::Hunt {
+                    tracking: t.role_skill(Role::Hunter, Skill::Tracking),
+                    cooperative: t.role_skill(Role::Hunter, Skill::DriveHunting),
+                    hunters: hunters * moving,
+                    tool_skill: t.role_skill(Role::Hunter, Skill::Knapping),
+                    tools: t.equipment.stone / n,
+                    familiarity: t.knowledge.prey[herd.species.index()],
+                    difficulty: herd.species.difficulty(),
+                    snow,
+                    distant: herd.cell != t.cell,
+                }) * encounter
+                    * (hunters * moving / herd.species.traits().handling).min(1.);
+                let success = world.rng.chance(p);
+                let kills = if success {
+                    world
+                        .rng
+                        .expected((hunters * moving / herd.species.traits().handling).max(1.))
+                        .min(((n * 12. - t.food) / herd.species.meat()).ceil() as u32)
+                        .min(herd.animals)
+                } else {
+                    0
+                };
+                let kills = herd.harvest(kills, &mut world.fauna_stats);
+                t.food += kills as f32 * herd.species.meat();
+                t.equipment.hides = (t.equipment.hides + kills as f32 * 2.).min(n * 2.);
+                let familiarity = &mut t.knowledge.prey[herd.species.index()];
+                *familiarity = (*familiarity + if success { 0.015 } else { 0.003 }).min(1.);
+                t.activity(
+                    world.day,
+                    Role::Hunter,
+                    Skill::Tracking,
+                    moving * 0.4,
+                    success,
+                );
+                t.activity(
+                    world.day,
+                    Role::Hunter,
+                    Skill::DriveHunting,
+                    moving * 0.2,
+                    success,
+                );
+                if success {
+                    world.totals.hunts += 1;
+                    world.totals.animals_hunted += u64::from(kills);
+                } else {
+                    world.totals.failed_hunts += 1;
                 }
-                if let Some(i) = target {
-                    let herd = &mut world.herds[i];
-                    let p = hunting::success_probability(hunting::Hunt {
-                        tracking: t.role_skill(Role::Hunter, Skill::Tracking),
-                        cooperative: t.role_skill(Role::Hunter, Skill::DriveHunting),
-                        hunters: hunters * moving,
-                        tool_skill: t.role_skill(Role::Hunter, Skill::Knapping),
-                        tools: t.equipment.stone / n,
-                        familiarity: t.knowledge.prey[herd.species.index()],
-                        difficulty: herd.species.difficulty(),
-                        snow: cell.weather.snow,
-                        distant: herd.cell != t.cell,
-                    });
-                    let success = world.rng.chance(p);
-                    let kills = if success {
-                        (1 + world.rng.index((hunters as u32 / 5).max(1) as usize) as u32)
-                            .min(herd.animals)
+                events.push(Event {
+                    day: world.day,
+                    kind: if success {
+                        EventKind::Hunt
                     } else {
-                        0
-                    };
-                    herd.animals -= kills;
-                    t.food += kills as f32 * herd.species.meat();
-                    t.equipment.hides = (t.equipment.hides + kills as f32 * 2.).min(n * 2.);
-                    let familiarity = &mut t.knowledge.prey[herd.species.index()];
-                    *familiarity = (*familiarity + if success { 0.015 } else { 0.003 }).min(1.);
-                    t.activity(
-                        world.day,
-                        Role::Hunter,
-                        Skill::Tracking,
-                        moving * 0.4,
-                        success,
-                    );
-                    t.activity(
-                        world.day,
-                        Role::Hunter,
-                        Skill::DriveHunting,
-                        moving * 0.2,
-                        success,
-                    );
-                    if success {
-                        world.totals.hunts += 1;
-                        world.totals.animals_hunted += u64::from(kills);
-                    } else {
-                        world.totals.failed_hunts += 1;
-                    }
-                    events.push(Event {
-                        day: world.day,
-                        kind: if success {
-                            EventKind::Hunt
-                        } else {
-                            EventKind::HuntFailed
-                        },
-                        cell: herd.cell,
-                        tribe: t.id,
-                        other: Some(herd.id),
-                        amount: kills,
-                        probability: p,
-                    });
-                }
+                        EventKind::HuntFailed
+                    },
+                    cell: herd.cell,
+                    tribe: t.id,
+                    other: Some(herd.id),
+                    amount: kills,
+                    probability: p,
+                });
             }
             let clothing = t.knowledge.level(Skill::Clothing) * (t.equipment.hides / n).min(1.);
             let need = t
@@ -547,72 +607,6 @@ fn learn(languages: &mut Vec<Language>, family: u32) {
     let sum: f32 = languages.iter().map(|l| l.share).sum();
     for l in languages {
         l.share /= sum;
-    }
-}
-
-fn migrate_herds(world: &mut World) {
-    let radius = world.config.radius_km();
-    for h in &mut world.herds {
-        if h.animals == 0 {
-            continue;
-        }
-        let ideal = h.species.ideal_temperature();
-        let score = |id: CellId| {
-            let c = &world.cells[id as usize];
-            if c.biome.water() {
-                return f32::NEG_INFINITY;
-            }
-            (c.resources.grazing / h.animals as f32).min(70.)
-                + h.species.habitat(
-                    matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest),
-                    c.elevation,
-                )
-                - (c.weather.temperature - ideal).abs() * 1.5
-                - c.weather.snow * 35.
-        };
-        let here = h.cell;
-        h.travel = (h.travel + 18. * (1. - world.cells[here as usize].weather.snow * 0.5))
-            .min(world.config.cell_km * 2.);
-        if h.travel >= world.config.cell_km * 0.5 {
-            let mut best = here;
-            let mut best_cost = 0.;
-            let mut best_score = score(here) + 3.;
-            for next in world.grid.neighbors(here) {
-                let cost = world.grid.angular_distance(here, next) * radius;
-                if cost > h.travel {
-                    continue;
-                }
-                let s = score(next) + world.rng.unit() * 3.;
-                if s > best_score {
-                    best = next;
-                    best_score = s;
-                    best_cost = cost;
-                }
-            }
-            if best != here {
-                h.cell = best;
-                h.travel -= best_cost;
-            }
-        }
-        let c = &mut world.cells[h.cell as usize];
-        let need = h.animals as f32 * h.species.grazing_need();
-        let eaten = c.resources.grazing.min(need);
-        c.resources.grazing -= eaten;
-        h.condition = (h.condition + (eaten / need - 0.85) * 0.08).clamp(0., 1.);
-        let annual = world.config.year_days() as f32;
-        let breeding = if c.weather.temperature > ideal - 5. && c.weather.temperature < ideal + 12.
-        {
-            h.species.annual_breeding()
-        } else {
-            0.03
-        };
-        let births = world
-            .rng
-            .expected(h.animals as f32 * breeding * h.condition / annual);
-        let deaths = world
-            .rng
-            .expected(h.animals as f32 * (0.09 / annual + (1. - h.condition).powi(3) * 0.025));
-        h.animals = h.animals.saturating_add(births).saturating_sub(deaths);
     }
 }
 

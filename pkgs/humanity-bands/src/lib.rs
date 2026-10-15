@@ -105,7 +105,7 @@ impl Tribe {
         self.people.refresh(day);
         self.health = self.people.members.iter().map(|h| h.health).sum::<f32>()
             / self.headcount().max(1) as f32;
-        self.knowledge = self.people.knowledge(self.knowledge.prey);
+        self.knowledge = self.people.knowledge(&self.knowledge.prey);
         self.specialists = Specialists::default();
         for h in &self.people.members {
             match h.role {

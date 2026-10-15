@@ -1,16 +1,3 @@
-use crate::{FORAGING, Resources, encounter};
-mod species;
-pub use species::{Herd, Species};
-
-/// Small-game acquisition still spends unsuccessful search time.
-pub fn trap(resources: &mut Resources, work: f32, skill: f32, area: f32) -> f32 {
-    let take = resources
-        .game
-        .min(work * (0.5 + skill) * encounter(resources.game, area, FORAGING.game_half_density));
-    resources.game -= take;
-    resources.harvested(take, area);
-    take
-}
 /// Outcome probability from participating hunters' actual skills and conditions.
 pub struct Hunt {
     /// Participating hunters' mean tracking proficiency.

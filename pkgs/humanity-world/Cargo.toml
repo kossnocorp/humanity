@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+humanity-flora.workspace = true
+humanity-fauna.workspace = true
 humanity-grid.workspace = true
 humanity-core.workspace = true
 noise = "0.9"

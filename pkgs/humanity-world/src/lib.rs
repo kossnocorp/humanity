@@ -1,6 +1,8 @@
 //! Periodic planetary terrain, priority-flood drainage, climate and standing ecology.
 use humanity_core::*;
 pub mod climate;
+pub mod flora;
+pub mod wildlife;
 use climate::CLIMATE;
 use humanity_grid::Grid;
 use noise::{NoiseFn, OpenSimplex};
@@ -50,14 +52,10 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
                     soil_moisture: moisture,
                 },
                 resources: Resources {
-                    plants: 0.,
+                    vegetation: Default::default(),
                     foraging_pressure: 0.,
-                    fruit: 0.,
                     game: 0.,
-                    grazing: 0.,
                     aquatic: AquaticLife::default(),
-                    wood: 0.,
-                    fiber: 0.,
                     toolstone: {
                         let p = grid.direction(i as u32).as_dvec3();
                         ((noise.get([p.x * 9. + 7., p.y * 9., p.z * 9.]) as f32 + 0.2) * 1.4)
@@ -108,6 +106,8 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
         day: 0,
         cells,
         herds: Vec::new(),
+        next_herd_id: 0,
+        fauna_stats: FaunaStats::default(),
         tribes: Vec::new(),
         next_band_id: 0,
         next_human_id: 0,
@@ -230,33 +230,12 @@ pub fn update_environment(world: &mut World, initialize: bool) {
             - (0.003 + t.max(0.) * 0.00025))
             .clamp(0.02, 1.);
         renew_subsistence(cell, area * world.grid.area_factor(id as u32), initialize);
-        if cell.biome.water() {
-            continue;
-        }
-        let warmth = ((t + 8.) / 25.).clamp(0.02, 1.) * ((55. - t) / 15.).clamp(0.05, 1.);
-        let growing =
-            warmth * (0.25 + cell.weather.soil_moisture * 0.75) * (1. - cell.weather.snow * 0.9);
-        let capacity = cell.biome.fertility() * area * world.grid.area_factor(id as u32);
-        let fruiting = ((t - 8.) / 16.).clamp(0., 1.);
-        let targets = [
-            capacity * (0.15 + growing) * 10000.,
-            capacity * growing * fruiting * 6000.,
-            capacity * (0.3 + growing) * 3500.,
-            capacity * growing * 14000.,
-        ];
-        let r = &mut cell.resources;
-        for (stock, target, renewal) in [
-            (&mut r.plants, targets[0], 0.025),
-            (&mut r.fruit, targets[1], 0.045),
-            (&mut r.game, targets[2], 0.006),
-            (&mut r.grazing, targets[3], 0.035),
-        ] {
-            if initialize {
-                *stock = target;
-            } else {
-                *stock = (*stock + (target - *stock) * renewal).max(0.);
-            }
-        }
+        flora::advance(
+            cell,
+            area * world.grid.area_factor(id as u32),
+            c.year_days(),
+            initialize,
+        );
     }
 }
 
@@ -278,44 +257,7 @@ fn populate(world: &mut World) -> Result<(), String> {
             "this climate generated no habitable land; increase temperature or rainfall".into(),
         );
     }
-    for &id in &land {
-        let cell = &world.cells[id as usize];
-        if !world
-            .rng
-            .chance(cell.biome.fertility() * 0.10 * world.grid.area_factor(id))
-        {
-            continue;
-        }
-        let species = if cell.elevation > 1400 {
-            Species::Ibex
-        } else if matches!(cell.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
-            if world.rng.chance(0.55) {
-                Species::Deer
-            } else {
-                Species::Boar
-            }
-        } else if cell.weather.temperature < 7. {
-            Species::Reindeer
-        } else if cell.weather.temperature > 22. {
-            Species::Antelope
-        } else {
-            Species::Bison
-        };
-        let (minimum, spread) = match species {
-            Species::Boar => (8, 32),
-            Species::Ibex => (12, 45),
-            Species::Deer => (15, 85),
-            _ => (40, 140),
-        };
-        world.herds.push(Herd {
-            id: world.herds.len() as u32,
-            cell: id,
-            species,
-            animals: minimum + world.rng.index(spread) as u32,
-            condition: 0.85,
-            travel: 0.,
-        });
-    }
+    wildlife::initialize(world);
     let mut remaining = world.config.population;
     while remaining > 0 {
         let id = habitable[world.rng.index(habitable.len())];
@@ -497,6 +439,7 @@ pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
             k.seed(Skill::Navigation, 0.15 + rng.unit() * 0.4);
         }
     }
+    k.prey.resize(Species::ALL.len(), 0.);
     for species in Species::ALL {
         k.prey[species.index()] = (0.15
             + species.habitat(
@@ -508,7 +451,7 @@ pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
     k
 }
 
-/// Aquatic biomass and craft plants renew independently of terrestrial food.
+/// Aquatic biomass renews independently of terrestrial flora.
 pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
     let t = cell.weather.temperature;
     let productivity = ((t + 12.) / 25.).clamp(0.08, 1.) * ((48. - t) / 15.).clamp(0.05, 1.);
@@ -522,11 +465,6 @@ pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
         Biome::Sea => 1.,
         Biome::Ocean => 0.12,
         _ => 0.,
-    };
-    let forest = if matches!(cell.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
-        1.
-    } else {
-        cell.biome.fertility() * 0.2
     };
     let r = &mut cell.resources;
     for (stock, capacity, rate) in [
@@ -548,12 +486,6 @@ pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
                 fresh * 400. * productivity
             },
             0.006,
-        ),
-        (&mut r.wood, forest * 2500., 0.002),
-        (
-            &mut r.fiber,
-            (cell.biome.fertility() + fresh * 0.5) * 1000.,
-            0.02,
         ),
     ] {
         let target = area * capacity;

@@ -4,8 +4,9 @@ mod insights;
 mod sites;
 pub use humanity_bands::{Equipment, Language, Opportunities, Specialists, Tribe, understanding};
 pub use humanity_cultures::{CampTradition, Culture, CultureVariant, Residence, SOCIAL};
+pub use humanity_fauna::{FaunaStats, Herd, Species};
+pub use humanity_flora::{Forage, Vegetation};
 pub use humanity_humans::*;
-pub use humanity_nutrition::hunting::{Herd, Species};
 pub use humanity_nutrition::{AquaticLife, FORAGING, Resources, encounter};
 pub use humanity_nutrition::{consumption, fishing, foraging, hunting};
 pub use humanity_skills::{Knowledge, LEARNING, Skill, Skills};
@@ -13,7 +14,7 @@ pub use insights::*;
 pub use sites::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 8;
+pub const SAVE_VERSION: u32 = 10;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -83,6 +84,11 @@ impl humanity_humans::RandomSource for Rng {
     fn index(&mut self, length: usize) -> usize {
         Rng::index(self, length)
     }
+    fn unit(&mut self) -> f32 {
+        Rng::unit(self)
+    }
+}
+impl humanity_fauna::FaunaRng for Rng {
     fn unit(&mut self) -> f32 {
         Rng::unit(self)
     }
@@ -229,6 +235,10 @@ pub struct World {
     pub rng: Rng,
     pub cells: Vec<Cell>,
     pub herds: Vec<Herd>,
+    /// Next wildlife-group ID; extinct and merged identities are never reused.
+    pub next_herd_id: u64,
+    /// Per-species demographic and harvest accounting.
+    pub fauna_stats: FaunaStats,
     pub tribes: Vec<Tribe>,
     /// Monotonic IDs are never reused, even after a band dies out.
     pub next_band_id: u64,

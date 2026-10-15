@@ -91,6 +91,6 @@ impl Tribe {
                 h.skills.learn(skill, level, work, true);
             }
         }
-        self.knowledge = self.people.knowledge(self.knowledge.prey);
+        self.knowledge = self.people.knowledge(&self.knowledge.prey);
     }
 }

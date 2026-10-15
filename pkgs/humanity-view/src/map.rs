@@ -20,6 +20,7 @@ pub struct MapMeshes {
     quad: Handle<Mesh>,
     tribe: Handle<StandardMaterial>,
     herd: Handle<StandardMaterial>,
+    small_fauna: Handle<StandardMaterial>,
     forest: Handle<StandardMaterial>,
     mountain: Handle<StandardMaterial>,
     fish: Handle<StandardMaterial>,
@@ -197,6 +198,7 @@ pub fn setup(
         quad: meshes.add(Rectangle::new(1., 1.)),
         tribe: icon_material(&icons.tribe),
         herd: icon_material(&icons.herd),
+        small_fauna: icon_material(&icons.small_fauna),
         forest: icon_material(&icons.forest),
         mountain: icon_material(&icons.mountain),
         fish: icon_material(&icons.fish),
@@ -490,7 +492,13 @@ pub fn redraw(
         }
     }
     let mut count = 0;
-    for (cell, material, side) in world
+    let mut fauna_cells = std::collections::BTreeMap::<CellId, bool>::new();
+    for h in world.herds.iter().filter(|h| h.animals > 0) {
+        *fauna_cells.entry(h.cell).or_default() |= !h.species.small();
+    }
+    let show_small_fauna =
+        matches!(view.layer, Layer::Food) || view.distance - PLANET_RADIUS < spacing * 6.;
+    for (cell, material, side, scale) in world
         .sites
         .iter()
         .map(|s| {
@@ -502,10 +510,32 @@ pub fn redraw(
                     &handles.seasonal_site
                 },
                 2.5,
+                1.,
             )
         })
-        .chain(world.tribes.iter().map(|t| (t.cell, &handles.tribe, -1.)))
-        .chain(world.herds.iter().map(|h| (h.cell, &handles.herd, 1.)))
+        .chain(
+            world
+                .tribes
+                .iter()
+                .map(|t| (t.cell, &handles.tribe, -1., 1.)),
+        )
+        .chain(
+            fauna_cells
+                .into_iter()
+                .filter(|(_, large)| *large || show_small_fauna)
+                .map(|(cell, large)| {
+                    (
+                        cell,
+                        if large {
+                            &handles.herd
+                        } else {
+                            &handles.small_fauna
+                        },
+                        1.,
+                        0.5,
+                    )
+                }),
+        )
     {
         if count >= 2200 {
             break;
@@ -524,7 +554,7 @@ pub fn redraw(
             material,
             p * (PLANET_RADIUS + size * 0.35) + offset,
             view.orbit,
-            size,
+            size * scale,
         );
         count += 1;
     }

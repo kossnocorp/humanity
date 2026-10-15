@@ -3,12 +3,16 @@
 World-independent food data and mechanics:
 
 - `foraging.rs`: density-dependent plant/fruit search and stock subtraction.
-- `hunting.rs`: trapping and large-game success from participating hunters' skills.
-- `hunting/species.rs`: herd records, prey species and biological/harvest parameters.
+- `hunting.rs`: capture success from participating hunters' skills.
+- `humanity-fauna`: owns herd/species data, encounter, actual trapping/harvest,
+  animal diets, reproduction, avoidance and conservative dispersal.
 - `fishing.rs`: patch encounter/travel/weather returns and actual catch subtraction.
 - `consumption.rs`: age-sensitive rations, eating, preservation/spoilage and personal
   health response to the fraction of real food need met.
-- `stocks.rs`: `Resources`, `AquaticLife`, harvest-driven local depletion.
+- `stocks.rs`: `Resources` composes `humanity-flora::Vegetation`, `AquaticLife`,
+  toolstone, harvest-driven local depletion and derived small-game biomass.
+  `game` is a view of living fauna, not renewable meat. Plant stocks/growth are owned
+  by `humanity-flora`, with persisted vegetation nested in resource snapshots.
 - `rules.rs`: inspectable `FORAGING` assumptions formerly misplaced in cultures.
 
 Functions receive environmental/work inputs rather than importing `World`.

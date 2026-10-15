@@ -105,17 +105,18 @@ fn wildlife_moves_and_humans_consume_real_cell_stocks() {
     let mut expected = w.clone();
     expected.day += 1;
     humanity_world::update_environment(&mut expected, false);
+    humanity_world::wildlife::advance(&mut expected);
     let available: f64 = expected
         .cells
         .iter()
-        .map(|c| f64::from(c.resources.edible()))
+        .map(|c| f64::from(c.resources.plants + c.resources.fruit))
         .sum();
     let mut sim = Simulation::default();
     sim.step(&mut w);
     let remaining: f64 = w
         .cells
         .iter()
-        .map(|c| f64::from(c.resources.edible()))
+        .map(|c| f64::from(c.resources.plants + c.resources.fruit))
         .sum();
     assert!(w.totals.gathered > 0.);
     assert!((available - remaining - w.totals.gathered).abs() < 2.);
@@ -129,7 +130,23 @@ fn wildlife_moves_and_humans_consume_real_cell_stocks() {
                 .any(|o| o.id == h.id && o.cell != h.cell)
         })
         .count();
-    assert!(moved > w.herds.len() / 3);
+    assert!(moved > 0);
+    assert!(w.fauna_stats.dispersals > 0);
+    for species in Species::ALL {
+        let i = species.index();
+        let live: u64 = w
+            .herds
+            .iter()
+            .filter(|h| h.species == species)
+            .map(|h| u64::from(h.animals))
+            .sum();
+        assert_eq!(
+            live,
+            w.fauna_stats.initial[i] + w.fauna_stats.births[i]
+                - w.fauna_stats.natural_deaths[i]
+                - w.fauna_stats.harvested[i]
+        );
+    }
     assert!(w.totals.animals_hunted > 0);
     assert!(w.totals.fished > 0.);
     assert!(w.totals.knowledge_exchanges > 0);

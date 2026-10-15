@@ -95,7 +95,7 @@ pub struct Knowledge {
     /// Mean proficiency among living children, working-age adults and elders.
     pub practitioners: [[f32; 3]; 13],
     /// Shared memory of encounters with each prey species.
-    pub prey: [f32; 6],
+    pub prey: Vec<f32>,
 }
 impl Knowledge {
     pub fn level(&self, skill: Skill) -> f32 {

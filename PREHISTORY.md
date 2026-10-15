@@ -17,7 +17,24 @@ These examples span different places, populations and periods. Living forager so
 
 ## Ecology and subsistence
 
-- **Six land-animal analogues:** reindeer, bison, antelope, deer, boar and ibex. Temperature, woodland/highland preferences, group sizes, grazing demand, reproduction, hunting difficulty and meat yield differ. They compete for grazing, migrate and can be depleted by hunting. Small game remains a separate edible stock used by hunters/trappers.
+- **Flora and shared carrying capacity (v10):** terrestrial plants have separate
+  grass/browse communities, biomass, vigor and seasonal productive-flow budgets.
+  Herbivores compete for those same budgets rather than each receiving a copy of
+  the pasture. Overuse can degrade vegetation; resting ground recovers. Dormancy
+  does not instantly erase standing winter forage. This is a guild-level resource
+  model with explicit prototype assumptions, not a complete botanical/soil model;
+  see [the flora audit](docs/research/flora.md).
+
+- **Fourteen land-animal analogues:** reindeer, bison, antelope, deer, boar, ibex,
+  hare, rabbit, grouse, wild goose, beaver, wild horse, elk and mammoth. Grazers,
+  browsers and omnivores use different resources. Density/food-limited recruitment,
+  seasonal suitability, dispersal from living source populations and learned
+  wariness allow conditional coexistence with humans. Small game is now explicit
+  fauna, not independently regenerating meat. Harvest, natural deaths and all
+  transfers are accounted for; extinction has no respawn. See
+  [fauna research and modelling limits](docs/research/fauna.md). Numerical traits
+  are prototype assumptions; individual animal ages/sexes and predators are not
+  explicitly simulated.
 - **Aquatic guilds:** freshwater fish in rivers/lakes; coastal and lower-density pelagic fish; shellfish in shallow seas and freshwater habitats. These are edible biomass in person-days, not individual counts. Temperature changes carrying capacity; ice and precipitation reduce harvest access. Harvest removes actual stocks. Renewal includes implicit recruitment/recolonization and can recover from zero.
 - **Time allocation:** aquatic foraging takes effort away from terrestrial gathering and hunting. A small material-working budget is reserved. Shellfish need little specialized knowledge; fishing improves with fishing knowledge and fiber gear. Adjacent waters represent shoreline catchments, not literal daily trips to every neighboring cell center.
 - **Materials:** renewable wood and fiber; geographically clustered toolstone; hides from hunts. Materials are portable, limited, used or worn down, and redistributed in peaceful encounters. Toolstone represents accessible geological supply, not an exhaustible quarry.
