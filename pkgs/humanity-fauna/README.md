@@ -86,4 +86,6 @@ Diagnostics distinguish species absent at generation from species subsequently
 extinct and report per-species harvest and wariness. Cell field notes show browse,
 local species, condition and wariness. Rates, habitat restrictions and response
 coefficients are inspectable in this crate; see `docs/research/fauna.md` for evidence
-and evaluation boundaries. Fresh v10 saves are required.
+and evaluation boundaries. Fresh v11 saves are required. The biome extension adds
+camels (arid browsers), tapirs (tropical-forest browsers) and water buffalo (wetland
+grazers), for 17 species. All use the same competition and conservation accounting.

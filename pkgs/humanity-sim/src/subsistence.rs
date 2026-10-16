@@ -118,11 +118,8 @@ pub fn daily(world: &mut World) {
                 continue;
             }
             let c = &world.cells[id as usize];
-            let cover = ((if matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
-                0.75
-            } else {
-                0.15
-            }) + (c.elevation.max(0) as f32 / 5000.).min(0.2))
+            let cover = ((if c.biome.woodland() { 0.75 } else { 0.15 })
+                + (c.elevation.max(0) as f32 / 5000.).min(0.2))
             .min(0.95);
             let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(id);
             let distance = world.grid.angular_distance(t.cell, id) * world.config.radius_km();
@@ -557,6 +554,11 @@ mod tests {
         w.tribes[0].knowledge.seed(Skill::Watercraft, 0.8);
         w.tribes[0].knowledge.seed(Skill::Cordage, 0.8);
         w.tribes[0].knowledge.seed(Skill::Fishing, 0.8);
+        for h in &mut w.tribes[0].people.members {
+            for skill in [Skill::Watercraft, Skill::Cordage, Skill::Fishing] {
+                h.skills.levels[skill as usize] = 0.8;
+            }
+        }
         w.cells[cell as usize].resources.wood = 0.;
         w.cells[cell as usize].resources.fiber = 0.;
         let before: f64 = w
@@ -618,11 +620,16 @@ mod tests {
     #[test]
     fn skilled_fishing_still_pays_for_search_travel_and_local_depletion() {
         let mut base = world();
+        // Isolate fishing from seeded fauna and competing gathering jobs.
+        base.herds.clear();
         base.tribes.truncate(1);
         let home = base.tribes[0].cell;
         let neighbor = base.grid.neighbors(home).next().unwrap();
         for cell in &mut base.cells {
             cell.resources.aquatic = AquaticLife::default();
+            cell.resources.plants = 0.;
+            cell.resources.fruit = 0.;
+            cell.resources.game = 0.;
             cell.resources.foraging_pressure = 0.;
             cell.biome = Biome::Grassland;
             cell.weather.snow = 0.;
@@ -633,6 +640,10 @@ mod tests {
         t.residence_days = 30;
         t.knowledge.seed(Skill::Fishing, 1.);
         t.knowledge.seed(Skill::Cordage, 1.);
+        for h in &mut t.people.members {
+            h.skills.levels[Skill::Fishing as usize] = 1.;
+            h.skills.levels[Skill::Cordage as usize] = 1.;
+        }
         t.equipment.fiber = t.headcount() as f32;
         base.cells[home as usize].resources.aquatic.freshwater_fish = 5000.;
         let measure = |mut w: World| {
@@ -647,7 +658,10 @@ mod tests {
         sparse.cells[home as usize]
             .resources
             .aquatic
-            .freshwater_fish = 100.;
+            .freshwater_fish = FORAGING.aquatic_half_density
+            * (base.config.cell_km / 20.).powi(2)
+            * base.grid.area_factor(home)
+            * 0.05;
         let (low, _) = measure(sparse);
         assert!(low < full * 0.5, "search slows before stock is exhausted");
         let mut depleted = base.clone();

@@ -14,7 +14,7 @@ pub use insights::*;
 pub use sites::*;
 
 pub type CellId = u32;
-pub const SAVE_VERSION: u32 = 10;
+pub const SAVE_VERSION: u32 = 11;
 pub const MAX_CELLS: u64 = 4_000_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,6 +132,10 @@ pub enum Biome {
     Savanna,
     Desert,
     Alpine,
+    Steppe,
+    Scrubland,
+    Marsh,
+    Swamp,
 }
 impl Biome {
     pub fn water(self) -> bool {
@@ -149,6 +153,46 @@ impl Biome {
             Self::Savanna => 0.65,
             Self::Desert => 0.06,
             Self::Alpine => 0.1,
+            Self::Steppe => 0.4,
+            Self::Scrubland => 0.3,
+            Self::Marsh => 0.75,
+            Self::Swamp => 0.85,
+        }
+    }
+    pub fn woodland(self) -> bool {
+        matches!(
+            self,
+            Self::Forest | Self::Taiga | Self::Rainforest | Self::Swamp
+        )
+    }
+    pub fn wetland(self) -> bool {
+        matches!(self, Self::Marsh | Self::Swamp)
+    }
+    /// Foot travel multiplier: boggy ground, dense understory and loose sand.
+    pub fn travel_cost(self) -> f32 {
+        match self {
+            Self::Swamp => 2.2,
+            Self::Marsh => 1.7,
+            Self::Rainforest => 1.8,
+            Self::Desert | Self::Alpine => 1.5,
+            Self::Scrubland => 1.25,
+            Self::Forest | Self::Taiga => 1.15,
+            _ => 1.,
+        }
+    }
+    pub fn challenges(self) -> &'static str {
+        match self {
+            Self::Desert => "Sparse forage, scarce water, slow sandy travel",
+            Self::Rainforest => "Dense understory, little pasture, concealed game",
+            Self::Swamp => "Waterlogged woodland, slow travel, fishing refuges",
+            Self::Marsh => "Reed beds, boggy travel, fish and waterfowl",
+            Self::Steppe => "Dry open pasture, limited wood, seasonal forage",
+            Self::Scrubland => "Sparse thorny browse, dry summers, slow travel",
+            Self::Alpine => "Cold high ground, sparse forage, difficult travel",
+            Self::Tundra | Self::Ice => "Cold exposure, snow and short growing seasons",
+            Self::Taiga => "Long winters, woodland browse, limited pasture",
+            Self::Savanna => "Seasonal drought and open-country game",
+            _ => "Local food depletion and seasonal resource changes",
         }
     }
 }

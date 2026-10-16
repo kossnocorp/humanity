@@ -157,7 +157,9 @@ impl Simulation {
                 + 14.
                     * (0.4 + tribe.health * 0.6)
                     * (1. - world.cells[here as usize].weather.snow * 0.6))
-                .min(world.config.cell_km * 2.);
+                // Enough credit to cross even two swamp cells; difficult terrain
+                // delays a move rather than becoming permanently impassable.
+                .min(world.config.cell_km * 4.);
             if tribe.travel < world.config.cell_km * 0.5 {
                 continue;
             }
@@ -176,7 +178,13 @@ impl Simulation {
                     && world.cells[here as usize].weather.precipitation < 4.;
                 let cost = world.grid.angular_distance(here, next)
                     * radius
-                    * if river_route { 0.65 } else { 1. };
+                    * if river_route {
+                        0.65
+                    } else {
+                        (world.cells[here as usize].biome.travel_cost()
+                            + world.cells[next as usize].biome.travel_cost())
+                            * 0.5
+                    };
                 if cost > tribe.travel {
                     continue;
                 }
@@ -255,14 +263,8 @@ impl Simulation {
             ) {
                 let habitat = &world.cells[site as usize];
                 let area = (world.config.cell_km / 20.).powi(2) * world.grid.area_factor(site);
-                let cover = ((if matches!(
-                    habitat.biome,
-                    Biome::Forest | Biome::Taiga | Biome::Rainforest
-                ) {
-                    0.75
-                } else {
-                    0.15
-                }) + (habitat.elevation.max(0) as f32 / 5000.).min(0.2))
+                let cover = ((if habitat.biome.woodland() { 0.75 } else { 0.15 })
+                    + (habitat.elevation.max(0) as f32 / 5000.).min(0.2))
                 .min(0.95);
                 let distance = world.grid.angular_distance(t.cell, site) * world.config.radius_km();
                 for &(_, i) in self.herds.at(site) {

@@ -4,6 +4,10 @@ use humanity_flora::{Community, Environment};
 
 pub fn advance(cell: &mut Cell, area: f32, year_days: u32, initialize: bool) {
     let community = match cell.biome {
+        Biome::Steppe => Community::Steppe,
+        Biome::Scrubland => Community::Scrubland,
+        Biome::Marsh => Community::Marsh,
+        Biome::Swamp => Community::Swamp,
         Biome::Ocean | Biome::Sea | Biome::Lake => Community::Water,
         Biome::Ice => Community::Bare,
         Biome::Grassland => Community::Grassland,

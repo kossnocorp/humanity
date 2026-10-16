@@ -1,6 +1,10 @@
 /// Broad botanical communities; individual plant species are not simulated yet.
 #[derive(Clone, Copy, Debug)]
 pub enum Community {
+    Steppe,
+    Scrubland,
+    Marsh,
+    Swamp,
     /// Predominantly herbaceous open vegetation.
     Grassland,
     /// Grassland with scattered woody vegetation.
@@ -26,6 +30,10 @@ impl Community {
     /// Potential grass and woody cover fractions, before stress and climate.
     pub fn cover(self) -> (f32, f32) {
         match self {
+            Self::Steppe => (0.55, 0.025),
+            Self::Scrubland => (0.18, 0.4),
+            Self::Marsh => (0.8, 0.05),
+            Self::Swamp => (0.15, 0.75),
             Self::Grassland => (0.75, 0.05),
             Self::Savanna => (0.65, 0.2),
             Self::Forest => (0.08, 0.8),

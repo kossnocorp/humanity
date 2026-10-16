@@ -18,6 +18,8 @@ fn habitat() -> Habitat {
         water: false,
         forest: true,
         wetland: true,
+        arid: false,
+        tropical_forest: false,
         elevation: 200,
         temperature: 18.,
         annual_temperature: 18.,
@@ -29,6 +31,24 @@ fn habitat() -> Habitat {
         browse: 15000.,
         fruit: 6000.,
         forage_supply: humanity_flora::Forage::new(100., 100., 50.),
+    }
+}
+
+#[test]
+fn specialist_animals_prefer_their_habitat_even_at_the_same_temperature() {
+    let mut c = habitat();
+    c.wetland = false;
+    for species in [Species::Camel, Species::Tapir, Species::WaterBuffalo] {
+        let outside = c.suitability(species, 26.);
+        let mut refuge = c.clone();
+        refuge.arid = species == Species::Camel;
+        refuge.tropical_forest = species == Species::Tapir;
+        refuge.wetland = species == Species::WaterBuffalo;
+        assert!(refuge.suitability(species, 26.) > outside * 20.);
+        refuge.grazing = 0.;
+        refuge.browse = 0.;
+        refuge.fruit = 0.;
+        assert_eq!(refuge.capacity(species, refuge.demand(species, 10), 10), 0.);
     }
 }
 fn group(species: Species, animals: u32) -> Herd {

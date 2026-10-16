@@ -17,8 +17,11 @@ pub fn habitats(w: &World) -> Vec<Habitat> {
             let area = (w.config.cell_km / 20.).powi(2) * w.grid.area_factor(i as u32);
             Habitat {
                 water: c.biome.water(),
-                forest: matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest),
-                wetland: c.river > 0.
+                forest: c.biome.woodland(),
+                arid: matches!(c.biome, Biome::Desert | Biome::Scrubland | Biome::Steppe),
+                tropical_forest: matches!(c.biome, Biome::Rainforest | Biome::Swamp),
+                wetland: c.biome.wetland()
+                    || c.river > 0.
                     || w.grid
                         .neighbors(i as u32)
                         .any(|id| w.cells[id as usize].biome.water()),

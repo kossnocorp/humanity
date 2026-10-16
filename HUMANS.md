@@ -121,7 +121,7 @@ The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with 
 
 Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
-**Save format v10:** adds persistent flora stocks, vigor, cover and shared forage
+**Save format v11:** adds expanded biome and animal variants to the persistent flora stocks, vigor, cover and shared forage
 production budgets. It includes expanded fauna, wariness, per-species population budgets,
 monotonic wildlife IDs and woody browse. It also stores individual humans, chronological birth dates, personal
 skills/biographies, analytics policy, local depletion, multi-season camp use,
@@ -155,6 +155,34 @@ return. Attachment weakens with condition; abandoned camps free site slots and c
 later be re-established with new IDs. Rates are tunable in `humanity-cultures`.
 
 ### Wildlife, fishing and cultures
+
+### Biome variety
+
+World generation combines temperature, regional moisture, a wet equatorial belt,
+dry subtropics and lowland drainage. Deserts and rainforests now form more distinct
+regions; **steppe, scrubland, marsh and swamp** add four land biomes. Different
+seeds/climates need not contain every biome.
+
+| Habitat | Resources and challenges | Characteristic wildlife |
+|---|---|---|
+| Desert / scrubland | Sparse forage, little freshwater; sand and scrub slow foot travel | Camels; hares and adaptable game |
+| Steppe | Open dry pasture, scarce wood and seasonal food | Wild horses, bison, antelope, hares |
+| Rainforest | Woody browse and fruit, little grazing; dense cover and slow travel | Tapirs, boar, woodland birds |
+| Swamp | Waterlogged woodland, browse and freshwater fish; 2.2× foot travel cost | Tapirs, water buffalo, beavers and waterfowl |
+| Marsh | Reed/grass forage, fish and fiber; 1.7× foot travel cost | Water buffalo and waterfowl |
+
+The three new species bring fauna to **17 species**. Habitat preference constrains
+their ranges, and they share the existing vegetation-production budget with all
+other consumers. Wetland recharge still responds to drought; river boats can help
+with difficult travel where the existing route/skill/equipment requirements hold.
+Field notes show biome challenges and foot-travel multipliers, and map colors
+distinguish the new habitats. See `docs/research/biomes.md` for assumptions and runs.
+
+```sh
+cargo run -p humanity-cli -- --seed 42 --temperature 28 --rainfall 1
+```
+
+### Flora and wildlife
 
 `humanity-flora` now owns terrestrial vegetation. Grassland and woodland have
 different grass/browse cover; overgrazing reduces vigor and future production,

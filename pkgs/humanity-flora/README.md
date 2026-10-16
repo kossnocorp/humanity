@@ -9,6 +9,9 @@ topology or rendering.
   and inspectable `FLORA` assumptions.
 - `growth.rs`: climate-dependent production, live biomass growth, stress/recovery
   and harvest-stock turnover.
+- Steppe and scrubland have separate dry grass/browse profiles; marshes emphasize
+  reeds/low vegetation, while swamps emphasize woody cover. Wetland hydrology is
+  supplied by the world adapter and remains sensitive to rainfall.
 - `humanity-world/src/flora.rs`: translates world biomes/weather into inputs.
 
 Plant state is serialized under `cells[].resources.vegetation`. Nutrition composes

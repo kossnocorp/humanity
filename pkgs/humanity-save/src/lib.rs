@@ -348,7 +348,7 @@ pub fn validate(w: &World) -> Result<()> {
             stock(t.food)
                 && finite_range(t.health, 0., 1.)
                 && finite_range(t.hunting_skill, 0., 1.)
-                && finite_range(t.travel, 0., w.config.cell_km * 2.),
+                && finite_range(t.travel, 0., w.config.cell_km * 4.),
             "invalid tribe state {}",
             t.id
         );

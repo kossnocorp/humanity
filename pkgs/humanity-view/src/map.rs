@@ -295,6 +295,10 @@ fn color(c: &Cell, layer: Layer) -> [f32; 3] {
         _ => {}
     }
     let base = match c.biome {
+        Biome::Steppe => [0.65, 0.61, 0.43],
+        Biome::Scrubland => [0.58, 0.55, 0.32],
+        Biome::Marsh => [0.35, 0.55, 0.49],
+        Biome::Swamp => [0.19, 0.36, 0.33],
         Biome::Ocean => [0.075, 0.20, 0.29],
         Biome::Sea => [0.12, 0.32, 0.40],
         Biome::Lake => [0.20, 0.43, 0.51],
@@ -458,7 +462,7 @@ pub fn redraw(
                 Some(&handles.fish)
             } else if c.elevation > 1700 {
                 Some(&handles.mountain)
-            } else if matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest) {
+            } else if c.biome.woodland() {
                 Some(&handles.forest)
             } else {
                 None

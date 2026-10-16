@@ -24,7 +24,13 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
             + sample(7., 0.) * 0.08
             + sample(17., 0.) * 0.03;
         height.push(h);
-        humidity.push((0.5 + sample(2.5, 30.) * 0.6).clamp(0.05, 1.));
+        // Wet equatorial belt and dry subtropics, broken up by regional weather.
+        let latitude = p.y.abs() as f32;
+        let equatorial = (1. - latitude / 0.3).max(0.);
+        let dry_belt = (1. - (latitude - 0.48).abs() / 0.22).max(0.);
+        humidity.push(
+            (0.5 + sample(2.5, 30.) * 0.8 + equatorial * 0.28 - dry_belt * 0.32).clamp(0.02, 1.),
+        );
     }
     let mut sorted = height.clone();
     sorted.sort_unstable_by(f32::total_cmp);
@@ -78,25 +84,7 @@ pub fn generate(config: PlanetConfig) -> Result<World, String> {
         }
         let t = annual_temperature(&config, &grid, id as u32, cell.elevation);
         cell.moisture = (cell.moisture + (cell.river / 100.).min(0.25)).min(1.);
-        cell.biome = if t < -12. {
-            Biome::Ice
-        } else if cell.elevation > 2400 {
-            Biome::Alpine
-        } else if t < -2. {
-            Biome::Tundra
-        } else if t < 7. {
-            Biome::Taiga
-        } else if cell.moisture < 0.22 {
-            Biome::Desert
-        } else if t > 22. && cell.moisture > 0.67 {
-            Biome::Rainforest
-        } else if t > 19. && cell.moisture < 0.5 {
-            Biome::Savanna
-        } else if cell.moisture > 0.56 {
-            Biome::Forest
-        } else {
-            Biome::Grassland
-        };
+        cell.biome = classify_biome(t, cell.elevation, cell.moisture, cell.river);
     }
     let mut world = World {
         version: SAVE_VERSION,
@@ -174,6 +162,41 @@ fn drain(grid: &Grid, cells: &mut [Cell]) {
     }
 }
 
+/// Climate envelopes plus lowland drainage; wetlands are traversable land.
+pub fn classify_biome(t: f32, elevation: i32, moisture: f32, river: f32) -> Biome {
+    if t < -12. {
+        Biome::Ice
+    } else if elevation > 2400 {
+        Biome::Alpine
+    } else if t < -2. {
+        Biome::Tundra
+    } else if elevation < 450 && river > 12. && moisture > 0.62 {
+        if t > 16. && moisture > 0.75 {
+            Biome::Swamp
+        } else {
+            Biome::Marsh
+        }
+    } else if moisture < 0.2 {
+        Biome::Desert
+    } else if moisture < 0.35 {
+        if t < 16. {
+            Biome::Steppe
+        } else {
+            Biome::Scrubland
+        }
+    } else if t < 7. {
+        Biome::Taiga
+    } else if t > 22. && moisture > 0.67 {
+        Biome::Rainforest
+    } else if t > 19. && moisture < 0.56 {
+        Biome::Savanna
+    } else if moisture > 0.56 {
+        Biome::Forest
+    } else {
+        Biome::Grassland
+    }
+}
+
 fn annual_temperature(config: &PlanetConfig, grid: &Grid, id: CellId, elevation: i32) -> f32 {
     config.temperature - 52. * grid.cooling(id) - elevation.max(0) as f32 * 0.0065
 }
@@ -222,7 +245,9 @@ pub fn update_environment(world: &mut World, initialize: bool) {
         w.soil_moisture = (w.soil_moisture
             + precipitation * 0.007
             + melt * 0.1
-            + if cell.river > 0. {
+            + if cell.biome.wetland() {
+                0.014 * wetness * c.rainfall
+            } else if cell.river > 0. {
                 0.007 * wetness * c.rainfall
             } else {
                 0.
@@ -441,12 +466,8 @@ pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
     }
     k.prey.resize(Species::ALL.len(), 0.);
     for species in Species::ALL {
-        k.prey[species.index()] = (0.15
-            + species.habitat(
-                matches!(c.biome, Biome::Forest | Biome::Taiga | Biome::Rainforest),
-                c.elevation,
-            ) * 0.015)
-            .clamp(0.02, 0.5);
+        k.prey[species.index()] =
+            (0.15 + species.habitat(c.biome.woodland(), c.elevation) * 0.015).clamp(0.02, 0.5);
     }
     k
 }
@@ -455,7 +476,7 @@ pub fn initial_knowledge(world: &World, cell: CellId, band: u32) -> Knowledge {
 pub fn renew_subsistence(cell: &mut Cell, area: f32, initialize: bool) {
     let t = cell.weather.temperature;
     let productivity = ((t + 12.) / 25.).clamp(0.08, 1.) * ((48. - t) / 15.).clamp(0.05, 1.);
-    let fresh = (if cell.biome == Biome::Lake {
+    let fresh = (if cell.biome == Biome::Lake || cell.biome.wetland() {
         1.
     } else {
         (cell.river / 30.).min(1.)

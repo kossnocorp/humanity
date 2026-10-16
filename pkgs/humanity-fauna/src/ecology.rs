@@ -11,6 +11,8 @@ pub struct Habitat {
     pub forest: bool,
     /// River, lake or coastal access for wetland specialists.
     pub wetland: bool,
+    pub arid: bool,
+    pub tropical_forest: bool,
     /// Elevation in meters.
     pub elevation: i32,
     /// Current temperature, Celsius.
@@ -46,6 +48,27 @@ impl Habitat {
         let t = species.traits();
         let thermal = 1. / (1. + ((temperature - t.temperature) / t.tolerance).powi(4));
         let niche = match species {
+            Species::Camel => {
+                if self.arid {
+                    1.
+                } else {
+                    0.02
+                }
+            }
+            Species::Tapir => {
+                if self.tropical_forest {
+                    1.
+                } else {
+                    0.02
+                }
+            }
+            Species::WaterBuffalo => {
+                if self.wetland {
+                    1.
+                } else {
+                    0.02
+                }
+            }
             Species::Beaver => {
                 if self.wetland && self.forest {
                     1.

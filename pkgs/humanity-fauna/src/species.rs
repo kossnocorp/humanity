@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-pub const SPECIES_COUNT: usize = 14;
+pub const SPECIES_COUNT: usize = 17;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(usize)]
@@ -32,6 +32,12 @@ pub enum Species {
     Elk,
     /// Slow-recruiting megaherbivore, vulnerable to sustained harvest.
     Mammoth,
+    /// Dry-country browser adapted to sparse scrub.
+    Camel,
+    /// Warm closed-forest browser.
+    Tapir,
+    /// Wetland grazer dependent on freshwater habitat.
+    WaterBuffalo,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Diet {
@@ -108,6 +114,9 @@ impl Species {
         Self::WildHorse,
         Self::Elk,
         Self::Mammoth,
+        Self::Camel,
+        Self::Tapir,
+        Self::WaterBuffalo,
     ];
     pub fn index(self) -> usize {
         self as usize
@@ -139,6 +148,60 @@ impl Species {
             seasonality,
             diet,
         ) = match self {
+            Self::Camel => (
+                0.24,
+                0.09,
+                0.65,
+                90.,
+                27.,
+                22.,
+                60.,
+                8,
+                0.8,
+                15.,
+                0.3,
+                0.2,
+                0.15,
+                4.,
+                0.35,
+                Diet::Browser,
+            ),
+            Self::Tapir => (
+                0.28,
+                0.10,
+                0.6,
+                55.,
+                26.,
+                12.,
+                65.,
+                4,
+                0.8,
+                5.,
+                0.25,
+                0.95,
+                0.12,
+                3.,
+                0.15,
+                Diet::Browser,
+            ),
+            Self::WaterBuffalo => (
+                0.30,
+                0.11,
+                1.5,
+                110.,
+                25.,
+                17.,
+                100.,
+                18,
+                0.9,
+                8.,
+                0.35,
+                0.5,
+                0.22,
+                5.,
+                0.4,
+                Diet::Grazer,
+            ),
             Self::Reindeer => (
                 0.32,
                 0.12,

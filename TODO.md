@@ -14,6 +14,7 @@
 | Cultural site | One remembered place per culture/cell: fishing or residential function, multiple seasons of use, occupation history, condition and upkeep |
 | Wildlife population / species | Aggregate herd, flock or colony with condition, travel and wariness; 14 species with distinct diets and life histories |
 | Vegetation / forage | Plant-community stocks, cover/vigor, seasonal production and a shared food budget for all wildlife consumers |
+| Biome niches | Dry belts and humid tropics; steppe/scrub/marsh/swamp communities, terrain travel costs and camel/tapir/water-buffalo specialists |
 | Language mixture | Family shares within a band; overlap affects mutual understanding |
 | Skills / Knowledge | Personal proficiency/experience in 13 skills; derived band means and shared prey familiarity |
 | Equipment | Portable wood, fiber, stone, hides and boat passenger capacity |

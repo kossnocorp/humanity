@@ -168,6 +168,11 @@ pub fn update(
                 );
                 let r = &c.resources;
                 let v = &r.vegetation;
+                body.push_str(&format!(
+                    "\n{}\nFoot travel cost: {:.2}x\n",
+                    c.biome.challenges(),
+                    c.biome.travel_cost()
+                ));
                 let demand = w.herds.iter().filter(|h| h.cell == id).fold(
                     humanity_core::Forage::default(),
                     |d, h| {
