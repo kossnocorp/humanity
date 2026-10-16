@@ -1,15 +1,46 @@
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use humanity_core::PlanetConfig;
 use std::{path::PathBuf, time::Instant};
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum PlanetSize {
+    Tiny,
+    Small,
+    #[default]
+    Medium,
+    Large,
+    Huge,
+    Earth,
+}
+
+impl PlanetSize {
+    fn resolution(self) -> u32 {
+        match self {
+            Self::Tiny => 28,
+            Self::Small => 56,
+            Self::Medium => 128,
+            Self::Large => 224,
+            Self::Huge => 320,
+            Self::Earth => 384,
+        }
+    }
+
+    fn radius_km(self) -> Option<f32> {
+        matches!(self, Self::Earth).then_some(6371.)
+    }
+}
 
 /// Humanity: a procedural hunter-gatherer planet. One simulation turn is one day.
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
     /// Icosahedron edge subdivisions. Cell count = 10 * resolution^2 + 2.
-    #[arg(long, required_unless_present_any = ["load", "inspect"])]
+    #[arg(long, conflicts_with = "size")]
     resolution: Option<u32>,
+    /// Planet size preset; defaults to medium when --resolution is omitted.
+    #[arg(long, value_enum, conflicts_with_all = ["resolution", "cell_km", "radius_km"])]
+    size: Option<PlanetSize>,
     /// Annual equatorial sea-level Celsius; proxy for solar heating.
     #[arg(long, allow_hyphen_values = true, required_unless_present_any = ["load", "inspect"])]
     temperature: Option<f32>,
@@ -45,7 +76,7 @@ struct Args {
     #[arg(long, default_value = "saves/world.json")]
     save: PathBuf,
     /// Resume all state and generation settings from this snapshot.
-    #[arg(long, conflicts_with_all = ["inspect", "resolution", "temperature", "season_days", "population", "cell_km", "radius_km", "axial_tilt", "ocean_fraction", "rainfall", "seed"])]
+    #[arg(long, conflicts_with_all = ["inspect", "size", "resolution", "temperature", "season_days", "population", "cell_km", "radius_km", "axial_tilt", "ocean_fraction", "rainfall", "seed"])]
     load: Option<PathBuf>,
     /// Validate a snapshot, print its summary and recent events, then exit.
     #[arg(long, conflicts_with = "load")]
@@ -125,7 +156,9 @@ fn main() -> Result<()> {
         humanity_save::load(path)?
     } else {
         let mut config = PlanetConfig {
-            resolution: args.resolution.context("missing --resolution")?,
+            resolution: args
+                .resolution
+                .unwrap_or_else(|| args.size.unwrap_or_default().resolution()),
             temperature: args.temperature.context("missing --temperature")?,
             season_days: args.season_days.context("missing --season-days")?,
             population: args.population.context("missing --population")?,
@@ -136,7 +169,10 @@ fn main() -> Result<()> {
             seed: args.seed,
         };
         config.validate().map_err(anyhow::Error::msg)?;
-        if let Some(radius) = args.radius_km {
+        if let Some(radius) = args
+            .radius_km
+            .or_else(|| args.size.and_then(PlanetSize::radius_km))
+        {
             if !radius.is_finite() || radius <= 0. {
                 bail!("--radius-km must be positive and finite");
             }
@@ -152,8 +188,10 @@ fn main() -> Result<()> {
         world.set_analytics(humanity_core::AnalyticsPolicy::Unlimited);
     }
     eprintln!(
-        "Planet ready: {} cells, {} tribes, {} wildlife groups ({:.2}s)",
+        "Planet ready: {} cells, {:.0} km radius, {:.1} km spacing, {} tribes, {} wildlife groups ({:.2}s)",
         world.cells.len(),
+        world.config.radius_km(),
+        world.config.cell_km,
         world.tribes.len(),
         world.herds.len(),
         start.elapsed().as_secs_f64()
@@ -217,4 +255,43 @@ fn main() -> Result<()> {
         bail!("viewer exited with an error");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(extra: &[&str]) -> Result<Args, clap::Error> {
+        Args::try_parse_from(
+            [
+                "humanity",
+                "--temperature",
+                "28",
+                "--season-days",
+                "90",
+                "--population",
+                "6000",
+            ]
+            .into_iter()
+            .chain(extra.iter().copied()),
+        )
+    }
+
+    #[test]
+    fn presets_and_custom_geometry_parse_without_conflicting_defaults() {
+        assert!(parse(&[]).is_ok());
+        for size in ["tiny", "small", "medium", "large", "huge", "earth"] {
+            assert!(parse(&["--size", size]).is_ok());
+        }
+        assert!(parse(&["--resolution", "28", "--cell-km", "15"]).is_ok());
+        assert!(parse(&["--resolution", "128", "--radius-km", "6371"]).is_ok());
+        for geometry in ["--resolution", "--cell-km", "--radius-km"] {
+            assert!(parse(&["--size", "earth", geometry, "28"]).is_err());
+        }
+        assert!(parse(&["--size", "unknown"]).is_err());
+        assert!(Args::try_parse_from(["humanity", "--load", "world.json"]).is_ok());
+        assert!(
+            Args::try_parse_from(["humanity", "--load", "world.json", "--size", "earth"]).is_err()
+        );
+    }
 }

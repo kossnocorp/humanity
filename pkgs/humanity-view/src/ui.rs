@@ -1,5 +1,6 @@
 use crate::*;
 use bevy::{
+    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input::mouse::{MouseScrollUnit, MouseWheel},
     window::PrimaryWindow,
 };
@@ -7,6 +8,9 @@ use humanity_core::{EventKind, Skill, Species};
 
 #[derive(Component)]
 pub struct FieldNotes;
+
+#[derive(Component)]
+pub struct FpsCounter;
 
 #[derive(Component)]
 pub enum Hud {
@@ -21,6 +25,24 @@ const MUTED: Color = Color::srgb(0.57, 0.68, 0.68);
 const GOLD: Color = Color::srgb(0.93, 0.79, 0.51);
 
 pub fn setup(mut commands: Commands) {
+    commands.spawn((
+        FpsCounter,
+        Text::new("FPS: --"),
+        TextFont {
+            font_size: 14.,
+            ..default()
+        },
+        TextColor(INK),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(8),
+            right: px(20),
+            padding: UiRect::axes(px(8), px(4)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.035, 0.065, 0.085, 0.98)),
+        GlobalZIndex(200),
+    ));
     commands
         .spawn((
             Node {
@@ -102,6 +124,26 @@ pub fn setup(mut commands: Commands) {
             p.spawn((Text::new("SPACE pause   - / + speed   ARROWS rotate   WHEEL zoom   S/L save/load   TAB layer   F follow   B browser   I band   ALT+ARROWS menu   ENTER open   ? population"),
                 TextFont { font_size: 13., ..default() }, TextColor(MUTED)));
         });
+}
+
+pub fn update_fps(
+    diagnostics: Res<DiagnosticsStore>,
+    time: Res<Time<Real>>,
+    mut last: Local<f64>,
+    mut texts: Query<&mut Text, With<FpsCounter>>,
+) {
+    if time.elapsed_secs_f64() - *last < 0.25 {
+        return;
+    }
+    *last = time.elapsed_secs_f64();
+    if let Some(fps) = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diagnostic| diagnostic.smoothed())
+    {
+        for mut text in &mut texts {
+            **text = format!("FPS: {fps:.0}");
+        }
+    }
 }
 
 pub fn update(

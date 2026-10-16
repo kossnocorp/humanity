@@ -10,13 +10,32 @@ From the repository root:
 
 ```sh
 cargo run -p humanity-cli -- \
-  --resolution 28 --temperature 28 \
+  --size medium --temperature 28 \
   --season-days 90 --population 6000 --seed 42
 ```
 
 The first graphics build is substantial; subsequent edits to simulation crates are much cheaper. Dependencies are optimized in development builds. Add `--paused` to start paused, or `--days 180` to pre-simulate half a year.
 
 With mise installed, `mise run play`, `mise run simulate`, and `mise run check` provide the same standard workflows.
+
+`mise play` defaults to **medium**, with about 21× the old starter planet's surface
+area and the same 6,000 initial humans. Choose a size with `mise play --size large`
+(or `mise run play --size large`). Additional CLI flags such as `--paused` work too.
+
+| Size | Resolution | Cells | Radius (km) |
+|---|---:|---:|---:|
+| `tiny` (old starter) | 28 | 7,842 | 465 |
+| `small` | 56 | 31,362 | 930 |
+| `medium` (default) | 128 | 163,842 | 2,125 |
+| `large` | 224 | 501,762 | 3,719 |
+| `huge` | 320 | 1,024,002 | 5,313 |
+| `earth` | 384 | 1,474,562 | 6,371 |
+
+Presets keep approximately 20 km neighbor spacing, so larger worlds have more
+local cells and physically larger biome regions rather than inflated travel steps.
+`earth` uses Earth's mean radius with procedural geography; it is an experimental,
+expensive option for generation, simulation, rendering and JSON saves.
+`mise simulate` retains the tiny planet for quick headless experiments.
 
 ### Controls
 
@@ -99,10 +118,11 @@ Cream camp icons are mobile human bands, not settlements. Ochre animal icons mar
 
 ### Planet arguments
 
-For a new world, `--resolution`, `--temperature`, `--season-days`, and `--population` are required. `--load` and `--inspect` use the saved configuration instead.
+For a new world, `--temperature`, `--season-days`, and `--population` are required. Size defaults to medium; use either `--size` or a custom `--resolution`. `--load` and `--inspect` use the saved configuration instead.
 
 | Argument | Meaning / default |
 |---|---|
+| `--size` | `tiny`, `small`, `medium`, `large`, `huge`, `earth`; conflicts with custom resolution/spacing/radius |
 | `--resolution` | Icosahedron edge subdivisions, 2…632; cell count = `10 × resolution² + 2` |
 | `--cell-km` | Mean neighbor-center spacing in km, 20; determines physical radius at this resolution |
 | `--radius-km` | Optional physical planet radius instead of `--cell-km`; derived spacing must be 1…200 km |
@@ -119,7 +139,7 @@ For a new world, `--resolution`, `--temperature`, `--season-days`, and `--popula
 
 The map is the dual of a subdivided icosahedron: **exactly 12 pentagons**, with every remaining cell a hexagon. Shared spherical circumcenters form the borders. There are no artificial seams or polar boundaries. The simulation uses the same graph as the 3D meshes; rivers, migrations, and tribal contacts cross all 20 base faces normally. Resource capacity accounts for actual spherical cell areas, and travel costs use great-circle neighbor distances. Hexagons are not perfectly regular or equal-area.
 
-Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The small starter planet has radius about 465 km; use `--resolution 128 --radius-km 6371` for an Earth-sized (but procedurally unrelated) planet. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
+Resolution 28 produces 7,842 cells; resolution 128 produces 163,842. Physical radius is derived from mean spacing using `R = cell_km × sqrt(cell_count × sqrt(3) / (8π))`. The default medium planet has radius about 2,125 km; use `--size earth` for an Earth-sized (but procedurally unrelated) planet at approximately 20 km spacing. Increase resolution for finer geography. Lighting is an observation aid, not a simulated astronomical day/night cycle.
 
 **Save format v11:** adds expanded biome and animal variants to the persistent flora stocks, vigor, cover and shared forage
 production budgets. It includes expanded fauna, wariness, per-species population budgets,

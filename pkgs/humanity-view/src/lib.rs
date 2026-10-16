@@ -148,7 +148,9 @@ pub fn run(
             }),
             ..default()
         }))
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_systems(Startup, (assets::setup, map::setup, ui::setup).chain())
+        .add_systems(Update, ui::update_fps)
         .add_systems(
             Update,
             (
